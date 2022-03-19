@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+message Request{
+     string id = 1;
+	oneof cmd{
+	  Ping Ping = 2;
+      Isync Isync = 3;
+    }
+}
+
+message Ping{
+}
+
+
+message Isync{
+  string id = 1;
+}
+
+message Response{
+	string id = 1;
+	oneof cmd{
+		Pong Pong = 2;
+		Redirect Redirect= 3;
+		Fsync Fsync = 4;
+		Rsync Rsync = 5;
+	}
+}
+
+message Pong{
+}
+
+message Redirect{
+	string id = 1;
+	string addr = 2;
+}
+
+message Fsync{
+	string id = 1;
+	string addr = 2;
+}
+
+message Rsync{
+	string id = 1;
+}
