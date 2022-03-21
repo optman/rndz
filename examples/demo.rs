@@ -19,8 +19,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let t = {
         let server_addr = server_addr.clone();
         thread::spawn(move || {
-            let mut c = Client::new(server_addr, "c1").unwrap();
-            let (socket, _addr) = c.accept().unwrap();
+            let c = Client::new(server_addr, "c1").unwrap();
+            let mut a = c.listen().unwrap();
+            let (socket, _addr) = a.accept().unwrap();
             let mut buf = [0; 10];
             let n = socket.recv(&mut buf).unwrap();
 

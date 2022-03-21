@@ -52,10 +52,14 @@ fn run_client(opt: ClientOpt) -> Result<()> {
 
     match opt.remote_peer {
         Some(peer) => {
-            c.connect(&peer)?;
+            let (socket, addr) = c.connect(&peer)?;
+            socket.send_to(b"hello", addr)?;
         }
         None => {
-            c.accept()?;
+            let mut a = c.listen()?;
+            while let Ok((_socket, addr)) = a.accept() {
+                println!("accept {}", addr);
+            }
         }
     }
 

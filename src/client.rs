@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 use std::{
     io,
     io::{Error, ErrorKind, Result},
+    sync::mpsc::{sync_channel, Receiver},
+    thread,
 };
 
 pub struct Client {
@@ -39,6 +41,17 @@ impl Client {
             server_addr: server_addr,
             id: id.into(),
         })
+    }
+
+    fn rebind(&mut self) -> Result<()> {
+        let bind_addr = match self.socket.local_addr().unwrap() {
+            SocketAddr::V4(_) => "0.0.0.0:0",
+            SocketAddr::V6(_) => "[::]:0",
+        };
+
+        self.socket = UdpSocket::bind(bind_addr)?;
+
+        Ok(())
     }
 
     fn new_req(&self) -> Request {
@@ -121,7 +134,7 @@ impl Client {
         Err(Error::from(ErrorKind::NotConnected))
     }
 
-    pub fn accept(&mut self) -> io::Result<(UdpSocket, SocketAddr)> {
+    pub fn listen(mut self) -> io::Result<Acceptor<(UdpSocket, SocketAddr)>> {
         let mut req = self.new_req();
         req.set_Ping(Ping::new());
         let ping = req.write_to_bytes()?;
@@ -132,69 +145,79 @@ impl Client {
 
         let mut last_peer_addr = None;
 
-        loop {
-            if last_ping.is_none() || last_ping.as_ref().unwrap().elapsed() > keepalive_to {
-                let _ = self.socket.send_to(ping.as_ref(), self.server_addr);
-                last_ping = Some(Instant::now())
-            }
+        let (tx, rx) = sync_channel(0);
 
-            let mut buf = [0; 1500];
-            let (n, addr) = match self.socket.recv_from(&mut buf) {
-                Ok((n, addr)) => (n, addr),
-                Err(_) => {
-                    continue;
+        thread::spawn(move || {
+            loop {
+                if last_ping.is_none() || last_ping.as_ref().unwrap().elapsed() > keepalive_to {
+                    let _ = self.socket.send_to(ping.as_ref(), self.server_addr);
+                    last_ping = Some(Instant::now())
                 }
-            };
 
-            if addr == self.server_addr {
-                let resp = match Response::parse_from_bytes(&mut buf[..n]) {
-                    Ok(resp) => resp,
+                let mut buf = [0; 1500];
+                let (n, addr) = match self.socket.recv_from(&mut buf) {
+                    Ok((n, addr)) => (n, addr),
                     Err(_) => {
                         continue;
                     }
                 };
 
-                if resp.get_id() != self.id {
-                    continue;
-                }
-
-                match resp.cmd {
-                    Some(RespCmd::Pong(_)) => {}
-                    Some(RespCmd::Fsync(fsync)) => {
-                        println!("{} call me", fsync.get_id());
-
-                        last_peer_addr = match fsync.get_addr().parse() {
-                            Ok(sa) => Some(sa),
-                            _ => continue,
-                        };
-
-                        self.send_rsync(fsync.get_id(), fsync.get_addr());
-                    }
-                    _ => {}
-                };
-            } else if last_peer_addr.is_some() && addr == *last_peer_addr.as_ref().unwrap() {
-                let req = match Request::parse_from_bytes(&mut buf[..n]) {
-                    Ok(req) => req,
-                    _ => {
-                        //normal packet begin...we will drop it , but it is not unexpected.
-                        return Ok((self.socket.try_clone().unwrap(), addr));
-                    }
-                };
-
-                match req.cmd.as_ref() {
-                    Some(ReqCmd::Isync(isync)) => {
-                        if isync.get_id() != self.id {
+                if addr == self.server_addr {
+                    let resp = match Response::parse_from_bytes(&mut buf[..n]) {
+                        Ok(resp) => resp,
+                        Err(_) => {
                             continue;
                         }
+                    };
 
-                        self.send_rsync(req.get_id(), addr);
+                    if resp.get_id() != self.id {
+                        continue;
                     }
-                    _ => {}
+
+                    match resp.cmd {
+                        Some(RespCmd::Pong(_)) => {}
+                        Some(RespCmd::Fsync(fsync)) => {
+                            println!("{} call me", fsync.get_id());
+
+                            last_peer_addr = match fsync.get_addr().parse() {
+                                Ok(sa) => Some(sa),
+                                _ => continue,
+                            };
+
+                            self.send_rsync(fsync.get_id(), fsync.get_addr());
+                        }
+                        _ => {}
+                    };
+                } else if last_peer_addr.is_some() && addr == *last_peer_addr.as_ref().unwrap() {
+                    let req = match Request::parse_from_bytes(&mut buf[..n]) {
+                        Ok(req) => req,
+                        _ => {
+                            //normal packet begin...we will drop it , but it is not unexpected.
+                            tx.send((self.socket.try_clone().unwrap(), addr)).unwrap();
+                            //we don't own the socket anymore.
+                            self.rebind().unwrap();
+                            last_ping = None;
+                            continue;
+                        }
+                    };
+
+                    match req.cmd.as_ref() {
+                        Some(ReqCmd::Isync(isync)) => {
+                            if isync.get_id() != self.id {
+                                continue;
+                            }
+
+                            self.send_rsync(req.get_id(), addr);
+                        }
+                        _ => {}
+                    }
+                } else {
+                    //unrelated packet
                 }
-            } else {
-                //unrelated packet
             }
-        }
+        });
+
+        Ok(Acceptor { rx })
     }
 
     fn send_rsync<A: ToSocketAddrs>(&mut self, id: &str, addr: A) {
@@ -208,5 +231,17 @@ impl Client {
         let b = resp.write_to_bytes().unwrap();
 
         let _ = self.socket.send_to(b.as_ref(), addr);
+    }
+}
+
+pub struct Acceptor<T> {
+    rx: Receiver<T>,
+}
+
+impl<T> Acceptor<T> {
+    pub fn accept(&mut self) -> Result<T> {
+        self.rx
+            .recv()
+            .map_err(|_| Error::new(ErrorKind::Other, "accept fail"))
     }
 }
