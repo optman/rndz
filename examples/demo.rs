@@ -3,7 +3,6 @@ use rndz::client::Client;
 use rndz::server::Server;
 
 use std::error::Error;
-use std::net::{SocketAddr, UdpSocket};
 use std::thread;
 use std::time;
 
@@ -17,27 +16,33 @@ fn main() -> Result<(), Box<dyn Error>> {
         });
     }
 
-    let server_addr: SocketAddr = server_addr.parse()?;
-
-    {
+    let t = {
         let server_addr = server_addr.clone();
         thread::spawn(move || {
-            let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+            let mut c = Client::new(server_addr, "c1").unwrap();
+            let (socket, _addr) = c.accept().unwrap();
+            let mut buf = [0; 10];
+            let n = socket.recv(&mut buf).unwrap();
 
-            let mut c = Client::new(socket, server_addr, "c1");
-            c.listen().unwrap();
-        });
-    }
+            assert_eq!(&buf[..n], b"hello");
+        })
+    };
 
     loop {
-        let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
-        let mut c = Client::new(socket, server_addr, "c2");
-        if c.connect("c1").is_ok() {
-            break;
-        } else {
-            thread::sleep(time::Duration::from_secs(2));
+        let mut c = Client::new(server_addr, "c2").unwrap();
+        match c.connect("c1") {
+            Ok((socket, remote_addr)) => {
+                socket
+                    .send_to("this will be drop".as_ref(), remote_addr)
+                    .unwrap();
+                socket.send_to(b"hello", remote_addr).unwrap();
+                break;
+            }
+            _ => thread::sleep(time::Duration::from_secs(2)),
         }
     }
+
+    t.join().unwrap();
 
     Ok(())
 }

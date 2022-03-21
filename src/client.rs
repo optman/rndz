@@ -7,7 +7,7 @@ use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 use std::{
     io,
-    io::{Error, ErrorKind},
+    io::{Error, ErrorKind, Result},
 };
 
 pub struct Client {
@@ -17,12 +17,28 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new<A: AsRef<str>>(socket: UdpSocket, server_addr: SocketAddr, id: A) -> Self {
-        Self {
+    pub fn new(server_addr: &str, id: &str) -> Result<Self> {
+        let server_addr = server_addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or(Error::new(ErrorKind::Other, "no addr"))?;
+
+        let bind_addr = match server_addr {
+            SocketAddr::V4(_) => "0.0.0.0:0",
+            SocketAddr::V6(_) => "[::]:0",
+        };
+
+        let socket = UdpSocket::bind(bind_addr)?;
+
+        Self::with_socket(socket, server_addr, id)
+    }
+
+    pub fn with_socket(socket: UdpSocket, server_addr: SocketAddr, id: &str) -> Result<Self> {
+        Ok(Self {
             socket: socket,
             server_addr: server_addr,
-            id: id.as_ref().into(),
-        }
+            id: id.into(),
+        })
     }
 
     fn new_req(&self) -> Request {
@@ -39,9 +55,9 @@ impl Client {
         Ok((resp, addr))
     }
 
-    pub fn connect<A: AsRef<str>>(&mut self, target_id: A) -> io::Result<()> {
+    pub fn connect(&mut self, target_id: &str) -> io::Result<(UdpSocket, SocketAddr)> {
         let mut isync = Isync::new();
-        isync.set_id(target_id.as_ref().into());
+        isync.set_id(target_id.into());
 
         let mut req = self.new_req();
         req.set_Isync(isync);
@@ -77,21 +93,24 @@ impl Client {
             return Err(Error::from(ErrorKind::NotConnected));
         }
 
-        let peer_addr = peer_addr.unwrap();
+        let peer_addr: SocketAddr = peer_addr
+            .unwrap()
+            .parse()
+            .map_err(|_| Error::from(ErrorKind::NotConnected))?;
 
-        println!("id {} addrs {}", target_id.as_ref(), peer_addr);
+        println!("{} addrs {}", target_id, peer_addr.to_string());
 
         for _ in 0..3 {
-            let _ = self.socket.send_to(isync.as_ref(), peer_addr.as_str());
+            let _ = self.socket.send_to(isync.as_ref(), peer_addr);
 
             if let Ok((resp, addr)) = self.recv_resp() {
-                if resp.id != self.id || addr.to_string() != peer_addr {
+                if resp.id != self.id || addr != peer_addr {
                     continue;
                 }
                 match resp.cmd {
                     Some(RespCmd::Rsync(rsync)) => {
                         if rsync.id == target_id.as_ref() {
-                            return Ok(());
+                            return Ok((self.socket.try_clone().unwrap(), peer_addr));
                         }
                     }
                     _ => {}
@@ -102,7 +121,7 @@ impl Client {
         Err(Error::from(ErrorKind::NotConnected))
     }
 
-    pub fn listen(&mut self) -> io::Result<()> {
+    pub fn accept(&mut self) -> io::Result<(UdpSocket, SocketAddr)> {
         let mut req = self.new_req();
         req.set_Ping(Ping::new());
         let ping = req.write_to_bytes()?;
@@ -110,6 +129,8 @@ impl Client {
         let mut last_ping: Option<Instant> = None;
         let keepalive_to = Duration::from_secs(10);
         self.socket.set_read_timeout(Some(keepalive_to))?;
+
+        let mut last_peer_addr = None;
 
         loop {
             if last_ping.is_none() || last_ping.as_ref().unwrap().elapsed() > keepalive_to {
@@ -142,14 +163,22 @@ impl Client {
                     Some(RespCmd::Fsync(fsync)) => {
                         println!("{} call me", fsync.get_id());
 
+                        last_peer_addr = match fsync.get_addr().parse() {
+                            Ok(sa) => Some(sa),
+                            _ => continue,
+                        };
+
                         self.send_rsync(fsync.get_id(), fsync.get_addr());
                     }
                     _ => {}
                 };
-            } else {
+            } else if last_peer_addr.is_some() && addr == *last_peer_addr.as_ref().unwrap() {
                 let req = match Request::parse_from_bytes(&mut buf[..n]) {
                     Ok(req) => req,
-                    _ => continue,
+                    _ => {
+                        //normal packet begin...we will drop it , but it is not unexpected.
+                        return Ok((self.socket.try_clone().unwrap(), addr));
+                    }
                 };
 
                 match req.cmd.as_ref() {
@@ -162,6 +191,8 @@ impl Client {
                     }
                     _ => {}
                 }
+            } else {
+                //unrelated packet
             }
         }
     }

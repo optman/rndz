@@ -1,5 +1,5 @@
 use std::io::Result;
-use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::SocketAddr;
 use structopt::StructOpt;
 
 mod client;
@@ -7,8 +7,6 @@ mod proto;
 mod server;
 use client::Client;
 use server::Server;
-
-use std::io::{Error, ErrorKind};
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "rndz")]
@@ -50,16 +48,16 @@ fn run_server(opt: ServerOpt) -> Result<()> {
 }
 
 fn run_client(opt: ClientOpt) -> Result<()> {
-    let server_addr = match opt.server_addr.to_socket_addrs()?.next() {
-        Some(addr) => addr,
-        _ => return Err(Error::new(ErrorKind::Other, "no address")),
-    };
-
-    let socket = UdpSocket::bind("0.0.0.0:0")?;
-    let mut c = Client::new(socket, server_addr, opt.id);
+    let mut c = Client::new(&opt.server_addr, &opt.id)?;
 
     match opt.remote_peer {
-        Some(peer) => c.connect(peer),
-        None => c.listen(),
+        Some(peer) => {
+            c.connect(&peer)?;
+        }
+        None => {
+            c.accept()?;
+        }
     }
+
+    Ok(())
 }
