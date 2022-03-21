@@ -1,6 +1,6 @@
 extern crate rndz;
-use rndz::client::Client;
-use rndz::server::Server;
+use rndz::Client;
+use rndz::Server;
 
 use std::error::Error;
 use std::thread;
