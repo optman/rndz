@@ -4,22 +4,42 @@ A simple rendezvous protocol implementation to help NAT traversal or hole punchi
 
 The idea is simple, a rendezvous server to observe peers address and forward connection request. When seen both peers sent each other packet, the NAT device or firewall rule then allow the traffic through.
 
+### tcp listen/connect 
+
+client1
+```rust
+use rndz::tcp::Client;
+
+let c1 = Client::new(rndz_server_addr, "c1")?;
+c1.listen()?;
+while let Ok(stream) = c1.accept()?{
+//...
+}
+```
+
+client2
+```rust
+use rndz::tcp::Client;
+let c2 = Client::new(rndz_server_addr, "c2")?;
+let (stream, addr) = c.connect("c1")?;
+```
+
 ### pair two udp socket
 
 client1
-```
-use rndz::Client;
+```rust
+use rndz::udp::Client;
 
 let c1 = Client::new(rndz_server_addr, "c1")?;
 let mut a = c1.listen()?;
-while let Ok(socket, addr) = a.accept()?{
+while let Ok((socket, addr)) = a.accept()?{
   //socket is ready to communicate with c2; a new listen socket will be automatic created, the port will changed.
 }
 ```
 
 client2
-```
-use rndz::Client;
+```rust
+use rndz::udp::Client;
 let c2 = Client::new(rndz_server_addr, "c2")?;
 let (socket, addr) = c.connect("c1")?;
 //use socket to communicate with c1; the first packet will be drop.

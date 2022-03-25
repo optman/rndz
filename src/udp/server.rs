@@ -1,10 +1,10 @@
 use protobuf::Message;
 use std::collections::HashMap;
-use std::io;
+use std::io::Result;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::Instant;
 
-use super::proto::rndz::{
+use crate::proto::{
     Fsync, Isync, Ping, Pong, Redirect, Request, Request_oneof_cmd as ReqCmd, Response,
     Response_oneof_cmd as RespCmd,
 };
@@ -29,7 +29,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new<A: ToSocketAddrs>(listen_addr: A) -> io::Result<Self> {
+    pub fn new<A: ToSocketAddrs>(listen_addr: A) -> Result<Self> {
         let socket = UdpSocket::bind(listen_addr)?;
 
         Ok(Self {
@@ -38,7 +38,7 @@ impl Server {
         })
     }
 
-    pub fn run(mut self) -> io::Result<()> {
+    pub fn run(mut self) -> Result<()> {
         let mut buf = [0; 1500];
 
         loop {
@@ -60,9 +60,9 @@ impl Server {
         };
     }
 
-    fn send_response<A: AsRef<str>>(&mut self, cmd: RespCmd, id: A, addr: SocketAddr) {
+    fn send_response(&mut self, cmd: RespCmd, id: String, addr: SocketAddr) {
         let mut resp = Response::new();
-        resp.set_id(id.as_ref().to_string());
+        resp.set_id(id);
         resp.cmd = Some(cmd);
 
         let vec = resp.write_to_bytes().unwrap();
@@ -88,6 +88,7 @@ impl Server {
         rdr.set_id(target_id.to_string());
 
         let (found, target_addr) = if let Some(c) = self.clients.get(target_id) {
+            rdr.set_id(target_id.to_string());
             rdr.set_addr(c.addr.to_string());
             (true, c.addr)
         } else {
@@ -95,13 +96,13 @@ impl Server {
             (false, ([0, 0, 0, 0], 0).into())
         };
 
-        self.send_response(RespCmd::Redirect(rdr), id.as_str(), addr);
+        self.send_response(RespCmd::Redirect(rdr), id.clone(), addr);
 
         if found {
             let mut fsync = Fsync::new();
             fsync.set_id(id);
             fsync.set_addr(addr.to_string());
-            self.send_response(RespCmd::Fsync(fsync), target_id, target_addr);
+            self.send_response(RespCmd::Fsync(fsync), target_id.to_string(), target_addr);
         }
     }
 }

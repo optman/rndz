@@ -1,7 +1,4 @@
-extern crate rndz;
-use rndz::Client;
-use rndz::Server;
-
+use rndz::udp::{Client, Server};
 use std::error::Error;
 use std::thread;
 use std::time;
@@ -11,9 +8,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     {
         let server_addr = server_addr.clone();
-        thread::spawn(move || {
-            Server::new(server_addr).unwrap().run().unwrap();
-        });
+        thread::spawn(move || Server::new(server_addr).unwrap().run().unwrap());
     }
 
     let t = {

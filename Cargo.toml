@@ -14,5 +14,6 @@ protobuf-codegen-pure = "2"
 [dependencies]
 structopt="*"
 protobuf="*"
+socket2={version="*", features=["all"]}
 
 

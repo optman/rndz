@@ -44,6 +44,7 @@ impl<'a> ::std::default::Default for &'a Request {
 pub enum Request_oneof_cmd {
     Ping(Ping),
     Isync(Isync),
+    Fsync(Fsync),
 }
 
 impl Request {
@@ -174,6 +175,55 @@ impl Request {
             Isync::new()
         }
     }
+
+    // .Fsync Fsync = 4;
+
+
+    pub fn get_Fsync(&self) -> &Fsync {
+        match self.cmd {
+            ::std::option::Option::Some(Request_oneof_cmd::Fsync(ref v)) => v,
+            _ => <Fsync as ::protobuf::Message>::default_instance(),
+        }
+    }
+    pub fn clear_Fsync(&mut self) {
+        self.cmd = ::std::option::Option::None;
+    }
+
+    pub fn has_Fsync(&self) -> bool {
+        match self.cmd {
+            ::std::option::Option::Some(Request_oneof_cmd::Fsync(..)) => true,
+            _ => false,
+        }
+    }
+
+    // Param is passed by value, moved
+    pub fn set_Fsync(&mut self, v: Fsync) {
+        self.cmd = ::std::option::Option::Some(Request_oneof_cmd::Fsync(v))
+    }
+
+    // Mutable pointer to the field.
+    pub fn mut_Fsync(&mut self) -> &mut Fsync {
+        if let ::std::option::Option::Some(Request_oneof_cmd::Fsync(_)) = self.cmd {
+        } else {
+            self.cmd = ::std::option::Option::Some(Request_oneof_cmd::Fsync(Fsync::new()));
+        }
+        match self.cmd {
+            ::std::option::Option::Some(Request_oneof_cmd::Fsync(ref mut v)) => v,
+            _ => panic!(),
+        }
+    }
+
+    // Take field
+    pub fn take_Fsync(&mut self) -> Fsync {
+        if self.has_Fsync() {
+            match self.cmd.take() {
+                ::std::option::Option::Some(Request_oneof_cmd::Fsync(v)) => v,
+                _ => panic!(),
+            }
+        } else {
+            Fsync::new()
+        }
+    }
 }
 
 impl ::protobuf::Message for Request {
@@ -184,6 +234,11 @@ impl ::protobuf::Message for Request {
             }
         }
         if let Some(Request_oneof_cmd::Isync(ref v)) = self.cmd {
+            if !v.is_initialized() {
+                return false;
+            }
+        }
+        if let Some(Request_oneof_cmd::Fsync(ref v)) = self.cmd {
             if !v.is_initialized() {
                 return false;
             }
@@ -210,6 +265,12 @@ impl ::protobuf::Message for Request {
                     }
                     self.cmd = ::std::option::Option::Some(Request_oneof_cmd::Isync(is.read_message()?));
                 },
+                4 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeLengthDelimited {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    self.cmd = ::std::option::Option::Some(Request_oneof_cmd::Fsync(is.read_message()?));
+                },
                 _ => {
                     ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
                 },
@@ -235,6 +296,10 @@ impl ::protobuf::Message for Request {
                     let len = v.compute_size();
                     my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
                 },
+                &Request_oneof_cmd::Fsync(ref v) => {
+                    let len = v.compute_size();
+                    my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+                },
             };
         }
         my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
@@ -255,6 +320,11 @@ impl ::protobuf::Message for Request {
                 },
                 &Request_oneof_cmd::Isync(ref v) => {
                     os.write_tag(3, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+                    os.write_raw_varint32(v.get_cached_size())?;
+                    v.write_to_with_cached_sizes(os)?;
+                },
+                &Request_oneof_cmd::Fsync(ref v) => {
+                    os.write_tag(4, ::protobuf::wire_format::WireTypeLengthDelimited)?;
                     os.write_raw_varint32(v.get_cached_size())?;
                     v.write_to_with_cached_sizes(os)?;
                 },
@@ -313,6 +383,11 @@ impl ::protobuf::Message for Request {
                 Request::has_Isync,
                 Request::get_Isync,
             ));
+            fields.push(::protobuf::reflect::accessor::make_singular_message_accessor::<_, Fsync>(
+                "Fsync",
+                Request::has_Fsync,
+                Request::get_Fsync,
+            ));
             ::protobuf::reflect::MessageDescriptor::new_pb_name::<Request>(
                 "Request",
                 fields,
@@ -330,6 +405,7 @@ impl ::protobuf::Message for Request {
 impl ::protobuf::Clear for Request {
     fn clear(&mut self) {
         self.id.clear();
+        self.cmd = ::std::option::Option::None;
         self.cmd = ::std::option::Option::None;
         self.cmd = ::std::option::Option::None;
         self.unknown_fields.clear();
@@ -1778,10 +1854,11 @@ impl ::protobuf::reflect::ProtobufValue for Rsync {
 }
 
 static file_descriptor_proto_data: &'static [u8] = b"\
-    \n\nrndz.proto\"e\n\x07Request\x12\x10\n\x02id\x18\x01\x20\x01(\tR\x02id\
-    B\0\x12\x1d\n\x04Ping\x18\x02\x20\x01(\x0b2\x05.PingH\0R\x04PingB\0\x12\
-    \x20\n\x05Isync\x18\x03\x20\x01(\x0b2\x06.IsyncH\0R\x05IsyncB\0B\x05\n\
-    \x03cmd:\0\"\x08\n\x04Ping:\0\"\x1b\n\x05Isync\x12\x10\n\x02id\x18\x01\
+    \n\nrndz.proto\"\x87\x01\n\x07Request\x12\x10\n\x02id\x18\x01\x20\x01(\t\
+    R\x02idB\0\x12\x1d\n\x04Ping\x18\x02\x20\x01(\x0b2\x05.PingH\0R\x04PingB\
+    \0\x12\x20\n\x05Isync\x18\x03\x20\x01(\x0b2\x06.IsyncH\0R\x05IsyncB\0\
+    \x12\x20\n\x05Fsync\x18\x04\x20\x01(\x0b2\x06.FsyncH\0R\x05FsyncB\0B\x05\
+    \n\x03cmd:\0\"\x08\n\x04Ping:\0\"\x1b\n\x05Isync\x12\x10\n\x02id\x18\x01\
     \x20\x01(\tR\x02idB\0:\0\"\xb3\x01\n\x08Response\x12\x10\n\x02id\x18\x01\
     \x20\x01(\tR\x02idB\0\x12\x1d\n\x04Pong\x18\x02\x20\x01(\x0b2\x05.PongH\
     \0R\x04PongB\0\x12)\n\x08Redirect\x18\x03\x20\x01(\x0b2\t.RedirectH\0R\

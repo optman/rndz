@@ -1,4 +1,4 @@
-use super::proto::rndz::{
+use crate::proto::{
     Isync, Ping, Request, Request_oneof_cmd as ReqCmd, Response, Response_oneof_cmd as RespCmd,
     Rsync,
 };
@@ -6,8 +6,11 @@ use protobuf::Message;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 use std::{
-    io,
-    io::{Error, ErrorKind, Result},
+    io::{
+        Error,
+        ErrorKind::{NotConnected, Other},
+        Result,
+    },
     sync::mpsc::{sync_channel, Receiver},
     thread,
 };
@@ -23,7 +26,7 @@ impl Client {
         let server_addr = server_addr
             .to_socket_addrs()?
             .next()
-            .ok_or(Error::new(ErrorKind::Other, "no addr"))?;
+            .ok_or(Error::new(Other, "no addr"))?;
 
         let bind_addr = match server_addr {
             SocketAddr::V4(_) => "0.0.0.0:0",
@@ -61,14 +64,14 @@ impl Client {
         req
     }
 
-    fn recv_resp(&mut self) -> io::Result<(Response, SocketAddr)> {
+    fn recv_resp(&mut self) -> Result<(Response, SocketAddr)> {
         let mut buf = [0; 1500];
         let (n, addr) = self.socket.recv_from(&mut buf)?;
         let resp = Response::parse_from_bytes(&mut buf[..n])?;
         Ok((resp, addr))
     }
 
-    pub fn connect(&mut self, target_id: &str) -> io::Result<(UdpSocket, SocketAddr)> {
+    pub fn connect(&mut self, target_id: &str) -> Result<(UdpSocket, SocketAddr)> {
         let mut isync = Isync::new();
         isync.set_id(target_id.into());
 
@@ -94,7 +97,7 @@ impl Client {
                             peer_addr = Some(rdr.addr);
                             break;
                         } else {
-                            return Err(Error::new(ErrorKind::Other, "target not found"));
+                            return Err(Error::new(Other, "target not found"));
                         }
                     }
                     _ => {}
@@ -103,13 +106,13 @@ impl Client {
         }
 
         if peer_addr.is_none() {
-            return Err(Error::from(ErrorKind::NotConnected));
+            return Err(Error::from(NotConnected));
         }
 
         let peer_addr: SocketAddr = peer_addr
             .unwrap()
             .parse()
-            .map_err(|_| Error::from(ErrorKind::NotConnected))?;
+            .map_err(|_| Error::from(NotConnected))?;
 
         println!("{} addrs {}", target_id, peer_addr.to_string());
 
@@ -131,10 +134,10 @@ impl Client {
             }
         }
 
-        Err(Error::from(ErrorKind::NotConnected))
+        Err(Error::from(NotConnected))
     }
 
-    pub fn listen(mut self) -> io::Result<Acceptor<(UdpSocket, SocketAddr)>> {
+    pub fn listen(mut self) -> Result<Acceptor<(UdpSocket, SocketAddr)>> {
         let mut req = self.new_req();
         req.set_Ping(Ping::new());
         let ping = req.write_to_bytes()?;
@@ -240,8 +243,6 @@ pub struct Acceptor<T> {
 
 impl<T> Acceptor<T> {
     pub fn accept(&mut self) -> Result<T> {
-        self.rx
-            .recv()
-            .map_err(|_| Error::new(ErrorKind::Other, "accept fail"))
+        self.rx.recv().map_err(|_| Error::new(Other, "accept fail"))
     }
 }

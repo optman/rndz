@@ -1,12 +1,11 @@
-use std::io::Result;
+use std::io::{Read, Result, Write};
 use std::net::SocketAddr;
+use std::thread;
 use structopt::StructOpt;
 
-mod client;
 mod proto;
-mod server;
-use client::Client;
-use server::Server;
+mod tcp;
+mod udp;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "rndz")]
@@ -25,6 +24,9 @@ struct ClientOpt {
 
     #[structopt(long = "remote-peer")]
     remote_peer: Option<String>,
+
+    #[structopt(long = "tcp")]
+    tcp: bool,
 }
 
 #[derive(StructOpt, Debug)]
@@ -43,22 +45,47 @@ fn main() -> Result<()> {
 }
 
 fn run_server(opt: ServerOpt) -> Result<()> {
-    let s = Server::new(opt.listen_addr)?;
+    let s = udp::Server::new(opt.listen_addr)?;
+    thread::spawn(move || s.run().unwrap());
+
+    let s = tcp::Server::new(opt.listen_addr)?;
     s.run()
 }
 
 fn run_client(opt: ClientOpt) -> Result<()> {
-    let mut c = Client::new(&opt.server_addr, &opt.id)?;
+    if !opt.tcp {
+        let mut c = udp::Client::new(&opt.server_addr, &opt.id)?;
 
-    match opt.remote_peer {
-        Some(peer) => {
-            let (socket, addr) = c.connect(&peer)?;
-            socket.send_to(b"hello", addr)?;
+        match opt.remote_peer {
+            Some(peer) => {
+                let (socket, addr) = c.connect(&peer)?;
+                socket.send_to(b"hello", addr)?;
+            }
+            None => {
+                let mut a = c.listen()?;
+                while let Ok((_socket, addr)) = a.accept() {
+                    println!("accept {}", addr);
+                }
+            }
         }
-        None => {
-            let mut a = c.listen()?;
-            while let Ok((_socket, addr)) = a.accept() {
-                println!("accept {}", addr);
+    } else {
+        let mut c = tcp::Client::new(&opt.server_addr, &opt.id)?;
+
+        match opt.remote_peer {
+            Some(peer) => {
+                let mut stream = c.connect(&peer)?;
+                println!("connect success");
+                let mut buf = [0u8; 5];
+                stream.read(&mut buf)?;
+            }
+            None => {
+                c.listen()?;
+                while let Ok((mut stream, addr)) = c.accept() {
+                    println!("accept {}", addr.to_string());
+                    thread::spawn(move || {
+                        let _ = stream.write_all(b"hello");
+                    });
+                }
             }
         }
     }

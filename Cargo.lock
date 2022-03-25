@@ -146,7 +146,18 @@ version = "0.1.0"
 dependencies = [
  "protobuf",
  "protobuf-codegen-pure",
+ "socket2",
  "structopt",
+]
+
+[[package]]
+name = "socket2"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66d72b759436ae32898a2af0a14218dbf55efde3feeb170eb623637db85ee1e0"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
