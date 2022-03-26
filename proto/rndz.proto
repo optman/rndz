@@ -6,6 +6,7 @@ message Request{
 	  Ping Ping = 2;
       Isync Isync = 3;
 	  Fsync Fsync = 4;
+   	  Rsync Rsync = 5;
     }
 }
 
@@ -23,7 +24,6 @@ message Response{
 		Pong Pong = 2;
 		Redirect Redirect= 3;
 		Fsync Fsync = 4;
-		Rsync Rsync = 5;
 	}
 }
 

@@ -124,17 +124,14 @@ impl PeerHandler {
         self.id = src_id;
         {
             let mut peers = self.peers.lock().unwrap();
-            let mut p = peers.entry(self.id.clone()).or_insert_with(|| {
-                println!("new client {}", self.id);
-
-                PeerState {
-                    req_tx: self.req_tx.clone(),
-                    last_ping: Instant::now(),
-                    addr: self.stream.peer_addr().unwrap(),
-                }
+            let mut p = peers.entry(self.id.clone()).or_insert_with(|| PeerState {
+                req_tx: self.req_tx.clone(),
+                last_ping: Instant::now(),
+                addr: self.stream.peer_addr().unwrap(),
             });
 
             p.last_ping = Instant::now();
+            p.addr = self.stream.peer_addr().unwrap();
         }
 
         self.send_response(RespCmd::Pong(Pong::new()))
@@ -142,8 +139,6 @@ impl PeerHandler {
 
     fn handle_isync(&mut self, src_id: String, isync: Isync) -> Result<()> {
         let dst_id = isync.get_id();
-
-        println!("{} call {}", src_id, dst_id);
 
         let peers = self.peers.lock().unwrap();
         let p = match (*peers).get(dst_id) {

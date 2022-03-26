@@ -43,6 +43,21 @@ impl Client {
         })
     }
 
+    fn clone_socket(&self) -> Result<Socket> {
+        let local_addr = self.socket.local_addr().unwrap().as_socket().unwrap();
+
+        let domain = match local_addr {
+            SocketAddr::V4(_) => Domain::IPV4,
+            SocketAddr::V6(_) => Domain::IPV6,
+        };
+
+        let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        socket.set_reuse_address(true)?;
+        socket.bind(&local_addr.into())?;
+
+        Ok(socket)
+    }
+
     fn new_req(&self) -> Request {
         let mut req = Request::new();
         req.set_id(self.id.clone());
@@ -101,9 +116,7 @@ impl Client {
             .parse()
             .map_err(|_| Error::from(NotConnected))?;
 
-        println!("{} addrs {}", target_id, peer_addr.to_string());
-
-        Ok((self.socket.try_clone().unwrap().into(), peer_addr))
+        Ok((self.clone_socket()?.into(), peer_addr))
     }
 
     pub fn listen(mut self) -> Result<UdpSocket> {
@@ -115,16 +128,7 @@ impl Client {
         let keepalive_to = Duration::from_secs(10);
         self.socket.set_read_timeout(Some(keepalive_to))?;
 
-        let local_addr = self.socket.local_addr().unwrap().as_socket().unwrap();
-
-        let domain = match local_addr {
-            SocketAddr::V4(_) => Domain::IPV4,
-            SocketAddr::V6(_) => Domain::IPV6,
-        };
-
-        let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).unwrap();
-        socket.set_reuse_address(true)?;
-        socket.bind(&local_addr.into())?;
+        let socket = self.clone_socket()?;
 
         thread::spawn(move || loop {
             if last_ping.is_none() || last_ping.as_ref().unwrap().elapsed() > keepalive_to {
@@ -152,7 +156,7 @@ impl Client {
             match resp.cmd {
                 Some(RespCmd::Pong(_)) => {}
                 Some(RespCmd::Fsync(fsync)) => {
-                    println!("{} call me", fsync.get_id());
+                    self.send_rsync(fsync.get_id(), self.server_addr);
 
                     match fsync.get_addr().parse() {
                         Ok(addr) => self.send_rsync(fsync.get_id(), addr),
@@ -168,10 +172,10 @@ impl Client {
 
     fn send_rsync(&mut self, id: &str, addr: SocketAddr) {
         let mut rsync = Rsync::new();
-        rsync.set_id(self.id.to_string());
+        rsync.set_id(id.to_string());
 
-        let mut resp = Response::new();
-        resp.set_id(id.to_string());
+        let mut resp = Request::new();
+        resp.set_id(self.id.to_string());
         resp.set_Rsync(rsync);
 
         let b = resp.write_to_bytes().unwrap();

@@ -6,9 +6,10 @@ use std::time::Instant;
 
 use crate::proto::{
     Fsync, Isync, Ping, Pong, Redirect, Request, Request_oneof_cmd as ReqCmd, Response,
-    Response_oneof_cmd as RespCmd,
+    Response_oneof_cmd as RespCmd, Rsync,
 };
 
+#[derive(Copy, Clone)]
 struct Client {
     addr: SocketAddr,
     last_ping: Instant,
@@ -54,6 +55,7 @@ impl Server {
         match req.cmd {
             Some(ReqCmd::Ping(ping)) => self.handle_ping(req.id, ping, addr),
             Some(ReqCmd::Isync(isync)) => self.handle_isync(req.id, isync, addr),
+            Some(ReqCmd::Rsync(rsync)) => self.handle_rsync(req.id, rsync, addr),
             _ => {
                 println!("unknown cmd {:?}", req)
             }
@@ -70,10 +72,10 @@ impl Server {
     }
 
     fn handle_ping(&mut self, id: String, _ping: Ping, addr: SocketAddr) {
-        let mut c = self.clients.entry(id.clone()).or_insert_with(|| {
-            println!("new client {}", id);
-            Client::default()
-        });
+        let mut c = self
+            .clients
+            .entry(id.clone())
+            .or_insert_with(|| Client::default());
         c.last_ping = Instant::now();
         c.addr = addr;
 
@@ -82,27 +84,33 @@ impl Server {
 
     fn handle_isync(&mut self, id: String, isync: Isync, addr: SocketAddr) {
         let target_id = isync.get_id();
-        println!("{} want connect {}", id, target_id);
+        if let Some(t) = self.clients.get(target_id).map(|t| *t) {
+            let mut s = self.clients.entry(id.clone()).or_insert(Client::default());
+            s.last_ping = Instant::now();
+            s.addr = addr;
 
-        let mut rdr = Redirect::new();
-        rdr.set_id(target_id.to_string());
-
-        let (found, target_addr) = if let Some(c) = self.clients.get(target_id) {
-            rdr.set_id(target_id.to_string());
-            rdr.set_addr(c.addr.to_string());
-            (true, c.addr)
-        } else {
-            println!("target id {} not found", target_id);
-            (false, ([0, 0, 0, 0], 0).into())
-        };
-
-        self.send_response(RespCmd::Redirect(rdr), id.clone(), addr);
-
-        if found {
             let mut fsync = Fsync::new();
             fsync.set_id(id);
             fsync.set_addr(addr.to_string());
-            self.send_response(RespCmd::Fsync(fsync), target_id.to_string(), target_addr);
+            self.send_response(RespCmd::Fsync(fsync), target_id.to_string(), t.addr);
+        } else {
+            println!("target id {} not found", target_id);
+            let mut rdr = Redirect::new();
+            rdr.set_id(target_id.to_string());
+            self.send_response(RespCmd::Redirect(rdr), id.clone(), addr);
+        }
+    }
+
+    fn handle_rsync(&mut self, id: String, rsync: Rsync, addr: SocketAddr) {
+        let target_id = rsync.get_id();
+
+        if let Some(c) = self.clients.get(target_id).map(|c| *c) {
+            let mut rdr = Redirect::new();
+            rdr.set_id(id.to_string());
+            rdr.set_addr(addr.to_string());
+            self.send_response(RespCmd::Redirect(rdr), target_id.to_string(), c.addr);
+        } else {
+            println!("rsync could not find target {}", target_id);
         }
     }
 }

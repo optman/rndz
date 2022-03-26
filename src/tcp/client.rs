@@ -76,8 +76,6 @@ impl Client {
             _ => Err(Error::new(Other, "invalid server response"))?,
         };
 
-        println!("{} at {}", target_id, addr);
-
         let target_addr: SocketAddr = addr
             .parse()
             .map_err(|_| Error::new(Other, "target id not found"))?;
@@ -141,7 +139,6 @@ impl Client {
                             .get_addr()
                             .parse()
                             .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
-                        println!("{} call me", dst_addr.to_string());
 
                         let s = Self::bind(local_addr.clone().into())?;
                         let _ = s.connect_timeout(&dst_addr.into(), Duration::from_secs(1));
