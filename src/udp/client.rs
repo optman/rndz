@@ -1,8 +1,7 @@
-use crate::proto::{
-    Isync, Ping, Request, Request_oneof_cmd as ReqCmd, Response, Response_oneof_cmd as RespCmd,
-    Rsync,
-};
+use crate::proto::{Isync, Ping, Request, Response, Response_oneof_cmd as RespCmd, Rsync};
 use protobuf::Message;
+use socket2::{Domain, Protocol, Socket, Type};
+use std::mem::MaybeUninit;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 use std::{
@@ -11,12 +10,11 @@ use std::{
         ErrorKind::{NotConnected, Other},
         Result,
     },
-    sync::mpsc::{sync_channel, Receiver},
     thread,
 };
 
 pub struct Client {
-    socket: UdpSocket,
+    socket: Socket,
     server_addr: SocketAddr,
     id: String,
 }
@@ -28,33 +26,21 @@ impl Client {
             .next()
             .ok_or(Error::new(Other, "no addr"))?;
 
-        let bind_addr = match server_addr {
-            SocketAddr::V4(_) => "0.0.0.0:0",
-            SocketAddr::V6(_) => "[::]:0",
+        let (domain, local_addr): (_, SocketAddr) = match server_addr {
+            SocketAddr::V4(_) => (Domain::IPV4, "0.0.0.0:0".parse().unwrap()),
+            SocketAddr::V6(_) => (Domain::IPV6, "[::]:0".parse().unwrap()),
         };
 
-        let socket = UdpSocket::bind(bind_addr)?;
+        let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        socket.set_reuse_address(true)?;
+        socket.bind(&local_addr.into())?;
+        socket.connect(&server_addr.into())?;
 
-        Self::with_socket(socket, server_addr, id)
-    }
-
-    pub fn with_socket(socket: UdpSocket, server_addr: SocketAddr, id: &str) -> Result<Self> {
         Ok(Self {
             socket: socket,
-            server_addr: server_addr,
+            server_addr: server_addr.into(),
             id: id.into(),
         })
-    }
-
-    fn rebind(&mut self) -> Result<()> {
-        let bind_addr = match self.socket.local_addr().unwrap() {
-            SocketAddr::V4(_) => "0.0.0.0:0",
-            SocketAddr::V6(_) => "[::]:0",
-        };
-
-        self.socket = UdpSocket::bind(bind_addr)?;
-
-        Ok(())
     }
 
     fn new_req(&self) -> Request {
@@ -65,10 +51,11 @@ impl Client {
     }
 
     fn recv_resp(&mut self) -> Result<(Response, SocketAddr)> {
-        let mut buf = [0; 1500];
+        let mut buf = unsafe { MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init() };
         let (n, addr) = self.socket.recv_from(&mut buf)?;
-        let resp = Response::parse_from_bytes(&mut buf[..n])?;
-        Ok((resp, addr))
+        let buf = unsafe { (&buf as *const _ as *const [u8; 1500]).read() };
+        let resp = Response::parse_from_bytes(&buf[..n])?;
+        Ok((resp, addr.as_socket().unwrap()))
     }
 
     pub fn connect(&mut self, target_id: &str) -> Result<(UdpSocket, SocketAddr)> {
@@ -85,7 +72,7 @@ impl Client {
 
         let mut peer_addr = None;
         for _ in 0..3 {
-            let _ = self.socket.send_to(isync.as_ref(), self.server_addr);
+            let _ = self.socket.send(isync.as_ref());
 
             if let Ok((resp, addr)) = self.recv_resp() {
                 if resp.get_id() != self.id || addr != self.server_addr {
@@ -116,28 +103,10 @@ impl Client {
 
         println!("{} addrs {}", target_id, peer_addr.to_string());
 
-        for _ in 0..3 {
-            let _ = self.socket.send_to(isync.as_ref(), peer_addr);
-
-            if let Ok((resp, addr)) = self.recv_resp() {
-                if resp.id != self.id || addr != peer_addr {
-                    continue;
-                }
-                match resp.cmd {
-                    Some(RespCmd::Rsync(rsync)) => {
-                        if rsync.id == target_id.as_ref() {
-                            return Ok((self.socket.try_clone().unwrap(), peer_addr));
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        Err(Error::from(NotConnected))
+        Ok((self.socket.try_clone().unwrap().into(), peer_addr))
     }
 
-    pub fn listen(mut self) -> Result<Acceptor<(UdpSocket, SocketAddr)>> {
+    pub fn listen(mut self) -> Result<UdpSocket> {
         let mut req = self.new_req();
         req.set_Ping(Ping::new());
         let ping = req.write_to_bytes()?;
@@ -146,84 +115,58 @@ impl Client {
         let keepalive_to = Duration::from_secs(10);
         self.socket.set_read_timeout(Some(keepalive_to))?;
 
-        let mut last_peer_addr = None;
+        let local_addr = self.socket.local_addr().unwrap().as_socket().unwrap();
 
-        let (tx, rx) = sync_channel(0);
+        let domain = match local_addr {
+            SocketAddr::V4(_) => Domain::IPV4,
+            SocketAddr::V6(_) => Domain::IPV6,
+        };
 
-        thread::spawn(move || {
-            loop {
-                if last_ping.is_none() || last_ping.as_ref().unwrap().elapsed() > keepalive_to {
-                    let _ = self.socket.send_to(ping.as_ref(), self.server_addr);
-                    last_ping = Some(Instant::now())
-                }
+        let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+        socket.set_reuse_address(true)?;
+        socket.bind(&local_addr.into())?;
 
-                let mut buf = [0; 1500];
-                let (n, addr) = match self.socket.recv_from(&mut buf) {
-                    Ok((n, addr)) => (n, addr),
-                    Err(_) => {
-                        continue;
-                    }
-                };
-
-                if addr == self.server_addr {
-                    let resp = match Response::parse_from_bytes(&mut buf[..n]) {
-                        Ok(resp) => resp,
-                        Err(_) => {
-                            continue;
-                        }
-                    };
-
-                    if resp.get_id() != self.id {
-                        continue;
-                    }
-
-                    match resp.cmd {
-                        Some(RespCmd::Pong(_)) => {}
-                        Some(RespCmd::Fsync(fsync)) => {
-                            println!("{} call me", fsync.get_id());
-
-                            last_peer_addr = match fsync.get_addr().parse() {
-                                Ok(sa) => Some(sa),
-                                _ => continue,
-                            };
-
-                            self.send_rsync(fsync.get_id(), fsync.get_addr());
-                        }
-                        _ => {}
-                    };
-                } else if last_peer_addr.is_some() && addr == *last_peer_addr.as_ref().unwrap() {
-                    let req = match Request::parse_from_bytes(&mut buf[..n]) {
-                        Ok(req) => req,
-                        _ => {
-                            //normal packet begin...we will drop it , but it is not unexpected.
-                            tx.send((self.socket.try_clone().unwrap(), addr)).unwrap();
-                            //we don't own the socket anymore.
-                            self.rebind().unwrap();
-                            last_ping = None;
-                            continue;
-                        }
-                    };
-
-                    match req.cmd.as_ref() {
-                        Some(ReqCmd::Isync(isync)) => {
-                            if isync.get_id() != self.id {
-                                continue;
-                            }
-
-                            self.send_rsync(req.get_id(), addr);
-                        }
-                        _ => {}
-                    }
-                } else {
-                    //unrelated packet
-                }
+        thread::spawn(move || loop {
+            if last_ping.is_none() || last_ping.as_ref().unwrap().elapsed() > keepalive_to {
+                let _ = self.socket.send(ping.as_ref());
+                last_ping = Some(Instant::now())
             }
+
+            let mut buf = unsafe { MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init() };
+            let n = match self.socket.recv(&mut buf) {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+
+            let buf = unsafe { (&buf as *const _ as *const [u8; 1500]).read() };
+
+            let resp = match Response::parse_from_bytes(&buf[..n]) {
+                Ok(resp) => resp,
+                Err(_) => continue,
+            };
+
+            if resp.get_id() != self.id {
+                continue;
+            }
+
+            match resp.cmd {
+                Some(RespCmd::Pong(_)) => {}
+                Some(RespCmd::Fsync(fsync)) => {
+                    println!("{} call me", fsync.get_id());
+
+                    match fsync.get_addr().parse() {
+                        Ok(addr) => self.send_rsync(fsync.get_id(), addr),
+                        _ => continue,
+                    };
+                }
+                _ => {}
+            };
         });
 
-        Ok(Acceptor { rx })
+        Ok(socket.into())
     }
 
-    fn send_rsync<A: ToSocketAddrs>(&mut self, id: &str, addr: A) {
+    fn send_rsync(&mut self, id: &str, addr: SocketAddr) {
         let mut rsync = Rsync::new();
         rsync.set_id(self.id.to_string());
 
@@ -233,16 +176,6 @@ impl Client {
 
         let b = resp.write_to_bytes().unwrap();
 
-        let _ = self.socket.send_to(b.as_ref(), addr);
-    }
-}
-
-pub struct Acceptor<T> {
-    rx: Receiver<T>,
-}
-
-impl<T> Acceptor<T> {
-    pub fn accept(&mut self) -> Result<T> {
-        self.rx.recv().map_err(|_| Error::new(Other, "accept fail"))
+        let _ = self.socket.send_to(b.as_ref(), &addr.into());
     }
 }

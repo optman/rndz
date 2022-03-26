@@ -15,11 +15,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         let server_addr = server_addr.clone();
         thread::spawn(move || {
             let c = Client::new(server_addr, "c1").unwrap();
-            let mut a = c.listen().unwrap();
-            let (socket, _addr) = a.accept().unwrap();
+            let socket = c.listen().unwrap();
             let mut buf = [0; 10];
             let n = socket.recv(&mut buf).unwrap();
-
             assert_eq!(&buf[..n], b"hello");
         })
     };
@@ -28,9 +26,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         let mut c = Client::new(server_addr, "c2").unwrap();
         match c.connect("c1") {
             Ok((socket, remote_addr)) => {
-                socket
-                    .send_to("this will be drop".as_ref(), remote_addr)
-                    .unwrap();
                 socket.send_to(b"hello", remote_addr).unwrap();
                 break;
             }

@@ -31,7 +31,7 @@ impl Client {
         for a in server_addrs {
             let (domain, local_addr): (_, SocketAddr) = match a {
                 SocketAddr::V4(_) => (Domain::IPV4, "0.0.0.0:0".parse().unwrap()),
-                SocketAddr::V6(_) => (Domain::IPV6, "[::]:".parse().unwrap()),
+                SocketAddr::V6(_) => (Domain::IPV6, "[::]:0".parse().unwrap()),
             };
 
             let svr = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).unwrap();
@@ -135,7 +135,7 @@ impl Client {
         let recv_fn = |local_addr: SocketAddr, r: &mut dyn Read| -> Result<()> {
             loop {
                 match Self::read_resp(r)?.cmd {
-                    Some(RespCmd::Pong(_)) => println!("pong"),
+                    Some(RespCmd::Pong(_)) => {}
                     Some(RespCmd::Fsync(fsync)) => {
                         let dst_addr: SocketAddr = fsync
                             .get_addr()
@@ -158,7 +158,6 @@ impl Client {
             });
         }
 
-        println!("i am listening at {}", local_addr.to_string());
         let s = Self::bind(local_addr.into())?;
         s.listen(1)?;
 

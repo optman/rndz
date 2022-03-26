@@ -62,9 +62,10 @@ fn run_client(opt: ClientOpt) -> Result<()> {
                 socket.send_to(b"hello", addr)?;
             }
             None => {
-                let mut a = c.listen()?;
-                while let Ok((_socket, addr)) = a.accept() {
-                    println!("accept {}", addr);
+                let s = c.listen()?;
+                let mut buf = [0u8; 1500];
+                while let Ok((n, addr)) = s.recv_from(&mut buf) {
+                    println!("receive {} bytes from {}", n, addr.to_string());
                 }
             }
         }

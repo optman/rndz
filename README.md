@@ -31,10 +31,8 @@ client1
 use rndz::udp::Client;
 
 let c1 = Client::new(rndz_server_addr, "c1")?;
-let mut a = c1.listen()?;
-while let Ok((socket, addr)) = a.accept()?{
-  //socket is ready to communicate with c2; a new listen socket will be automatic created, the port will changed.
-}
+let socket = c1.listen()?;
+socket.recv_from(...)?;
 ```
 
 client2
@@ -42,7 +40,7 @@ client2
 use rndz::udp::Client;
 let c2 = Client::new(rndz_server_addr, "c2")?;
 let (socket, addr) = c.connect("c1")?;
-//use socket to communicate with c1; the first packet will be drop.
+socket.send_to(b'hello', addr)?;
 ```
 
 ### test
