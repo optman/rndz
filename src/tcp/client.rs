@@ -12,14 +12,16 @@ pub struct Client {
     server_addr: String,
     id: String,
     listener: Option<Socket>,
+    local_addr: Option<SocketAddr>,
 }
 
 impl Client {
-    pub fn new(server_addr: &str, id: &str) -> Result<Self> {
+    pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
         Ok(Self {
             server_addr: server_addr.into(),
             id: id.into(),
             listener: None,
+            local_addr: local_addr,
         })
     }
 
@@ -28,19 +30,28 @@ impl Client {
 
         let mut last_error = None;
 
-        for a in server_addrs {
-            let (domain, local_addr): (_, SocketAddr) = match a {
-                SocketAddr::V4(_) => (Domain::IPV4, "0.0.0.0:0".parse().unwrap()),
-                SocketAddr::V6(_) => (Domain::IPV6, "[::]:0".parse().unwrap()),
+        for server_addr in server_addrs {
+            let local_addr = match self.local_addr {
+                Some(addr) => addr,
+                None => match server_addr {
+                    SocketAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
+                    SocketAddr::V6(_) => "[::]:0".parse().unwrap(),
+                },
+            };
+
+            let domain = match local_addr {
+                SocketAddr::V4(_) => Domain::IPV4,
+                SocketAddr::V6(_) => Domain::IPV6,
             };
 
             let svr = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).unwrap();
             svr.set_reuse_address(true)?;
+            #[cfg(unix)]
             svr.set_reuse_port(true)?;
 
             svr.bind(&local_addr.into())?;
 
-            match svr.connect(&a.into()) {
+            match svr.connect(&server_addr.into()) {
                 Ok(..) => return Ok(svr),
                 Err(e) => last_error = Some(e),
             }
@@ -57,6 +68,7 @@ impl Client {
 
         let s = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).unwrap();
         s.set_reuse_address(true)?;
+        #[cfg(unix)]
         s.set_reuse_port(true)?;
         s.bind(&local_addr)?;
 

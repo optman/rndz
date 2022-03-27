@@ -32,12 +32,14 @@ mod tests {
 
         let socket = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).unwrap();
         socket.set_reuse_address(true).unwrap();
+        #[cfg(unix)]
         socket.set_reuse_port(true).unwrap();
         socket.bind(&local_addr.into()).unwrap();
         socket.listen(1).unwrap();
 
         let socket2 = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP)).unwrap();
         socket2.set_reuse_address(true).unwrap();
+        #[cfg(unix)]
         socket2.set_reuse_port(true).unwrap();
         socket2.bind(&local_addr.into()).unwrap();
         let remote_addr2: SocketAddr = "192.168.1.1:80".parse().unwrap();

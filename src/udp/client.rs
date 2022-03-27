@@ -20,15 +20,23 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(server_addr: &str, id: &str) -> Result<Self> {
+    pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
         let server_addr = server_addr
             .to_socket_addrs()?
             .next()
             .ok_or(Error::new(Other, "no addr"))?;
 
-        let (domain, local_addr): (_, SocketAddr) = match server_addr {
-            SocketAddr::V4(_) => (Domain::IPV4, "0.0.0.0:0".parse().unwrap()),
-            SocketAddr::V6(_) => (Domain::IPV6, "[::]:0".parse().unwrap()),
+        let local_addr = match local_addr {
+            Some(addr) => addr,
+            None => match server_addr {
+                SocketAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
+                SocketAddr::V6(_) => "[::]:0".parse().unwrap(),
+            },
+        };
+
+        let domain = match local_addr {
+            SocketAddr::V4(_) => Domain::IPV4,
+            SocketAddr::V6(_) => Domain::IPV6,
         };
 
         let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).unwrap();
@@ -65,12 +73,12 @@ impl Client {
         req
     }
 
-    fn recv_resp(&mut self) -> Result<(Response, SocketAddr)> {
+    fn recv_resp(&mut self) -> Result<Response> {
         let mut buf = unsafe { MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init() };
-        let (n, addr) = self.socket.recv_from(&mut buf)?;
+        let n = self.socket.recv(&mut buf)?;
         let buf = unsafe { (&buf as *const _ as *const [u8; 1500]).read() };
         let resp = Response::parse_from_bytes(&buf[..n])?;
-        Ok((resp, addr.as_socket().unwrap()))
+        Ok(resp)
     }
 
     pub fn connect(&mut self, target_id: &str) -> Result<(UdpSocket, SocketAddr)> {
@@ -87,23 +95,26 @@ impl Client {
 
         let mut peer_addr = None;
         for _ in 0..3 {
-            let _ = self.socket.send(isync.as_ref());
+            self.socket.send(isync.as_ref())?;
 
-            if let Ok((resp, addr)) = self.recv_resp() {
-                if resp.get_id() != self.id || addr != self.server_addr {
-                    continue;
-                }
-                match resp.cmd {
-                    Some(RespCmd::Redirect(rdr)) => {
-                        if rdr.addr != "" {
-                            peer_addr = Some(rdr.addr);
-                            break;
-                        } else {
-                            return Err(Error::new(Other, "target not found"));
-                        }
+            match self.recv_resp() {
+                Ok(resp) => {
+                    if resp.get_id() != self.id {
+                        continue;
                     }
-                    _ => {}
+                    match resp.cmd {
+                        Some(RespCmd::Redirect(rdr)) => {
+                            if rdr.addr != "" {
+                                peer_addr = Some(rdr.addr);
+                                break;
+                            } else {
+                                return Err(Error::new(Other, "target not found"));
+                            }
+                        }
+                        _ => {}
+                    }
                 }
+                Err(_) => {}
             }
         }
 

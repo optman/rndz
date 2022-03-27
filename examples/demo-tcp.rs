@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     thread::spawn(move || loop {
         let server_addr = server_addr.clone();
-        let mut c = Client::new(server_addr, "c1").unwrap();
+        let mut c = Client::new(server_addr, "c1", None).unwrap();
         match c.listen() {
             Ok(_) => {
                 while let Ok((mut s, _)) = c.accept() {
@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     });
 
-    let mut c = Client::new(server_addr, "c2").unwrap();
+    let mut c = Client::new(server_addr, "c2", None).unwrap();
     let mut s = loop {
         match c.connect("c1") {
             Ok(s) => break s,

@@ -54,7 +54,7 @@ fn run_server(opt: ServerOpt) -> Result<()> {
 
 fn run_client(opt: ClientOpt) -> Result<()> {
     if !opt.tcp {
-        let mut c = udp::Client::new(&opt.server_addr, &opt.id)?;
+        let mut c = udp::Client::new(&opt.server_addr, &opt.id, None)?;
 
         match opt.remote_peer {
             Some(peer) => {
@@ -70,7 +70,7 @@ fn run_client(opt: ClientOpt) -> Result<()> {
             }
         }
     } else {
-        let mut c = tcp::Client::new(&opt.server_addr, &opt.id)?;
+        let mut c = tcp::Client::new(&opt.server_addr, &opt.id, None)?;
 
         match opt.remote_peer {
             Some(peer) => {
