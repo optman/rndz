@@ -2,7 +2,7 @@ use crate::proto::{
     Isync, Ping, Request, Request_oneof_cmd as ReqCmd, Response, Response_oneof_cmd as RespCmd,
 };
 use protobuf::Message;
-use socket2::{Domain, Protocol, SockAddr, Socket, Type};
+use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Read, Result, Write};
 use std::net::{Shutdown::Both, SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Condvar, Mutex};
@@ -10,7 +10,7 @@ use std::thread::spawn;
 use std::time::Duration;
 
 pub struct Client {
-    server_addr: String,
+    server_addr: SocketAddr,
     id: String,
     listener: Option<Socket>,
     svr_sk: Option<Socket>,
@@ -26,8 +26,13 @@ impl Drop for Client {
 
 impl Client {
     pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
+        let server_addr = server_addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or(Error::new(Other, "server name resolve fail"))?;
+
         Ok(Self {
-            server_addr: server_addr.into(),
+            server_addr: server_addr,
             id: id.into(),
             local_addr: local_addr,
             listener: None,
@@ -36,43 +41,27 @@ impl Client {
         })
     }
 
-    fn connect_server(&mut self) -> Result<socket2::Socket> {
-        let server_addrs = self.server_addr.to_socket_addrs()?;
-
-        let mut last_error = None;
-
-        for server_addr in server_addrs {
-            let local_addr = match self.local_addr {
-                Some(addr) => addr,
-                None => match server_addr {
-                    SocketAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
-                    SocketAddr::V6(_) => "[::]:0".parse().unwrap(),
-                },
-            };
-
-            let domain = match local_addr {
-                SocketAddr::V4(_) => Domain::IPV4,
-                SocketAddr::V6(_) => Domain::IPV6,
-            };
-
-            let svr = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).unwrap();
-            svr.set_reuse_address(true)?;
-            #[cfg(unix)]
-            svr.set_reuse_port(true)?;
-
-            svr.bind(&local_addr.into())?;
-
-            match svr.connect(&server_addr.into()) {
-                Ok(..) => return Ok(svr),
-                Err(e) => last_error = Some(e),
-            }
+    fn choose_bind_addr(&self) -> Result<SocketAddr> {
+        if let Some(ref addr) = self.local_addr {
+            return Ok(*addr);
         }
 
-        Err(last_error.unwrap_or(Error::new(Other, "server name resolve fail")))
+        let local_addr = match self.server_addr {
+            SocketAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
+            SocketAddr::V6(_) => "[::]:0".parse().unwrap(),
+        };
+
+        Ok(local_addr)
     }
 
-    fn bind(local_addr: SockAddr) -> Result<Socket> {
-        let domain = match local_addr.as_socket().unwrap() {
+    fn connect_server(&mut self, local_addr: Option<SocketAddr>) -> Result<socket2::Socket> {
+        let svr = Self::bind(local_addr.unwrap_or(self.choose_bind_addr()?).into())?;
+        svr.connect(&self.server_addr.into())?;
+        Ok(svr)
+    }
+
+    fn bind(local_addr: SocketAddr) -> Result<Socket> {
+        let domain = match local_addr {
             SocketAddr::V4(_) => Domain::IPV4,
             SocketAddr::V6(_) => Domain::IPV6,
         };
@@ -81,13 +70,13 @@ impl Client {
         s.set_reuse_address(true)?;
         #[cfg(unix)]
         s.set_reuse_port(true)?;
-        s.bind(&local_addr)?;
+        s.bind(&local_addr.into())?;
 
         Ok(s)
     }
 
     pub fn connect(&mut self, target_id: &str) -> Result<TcpStream> {
-        let mut svr = self.connect_server()?;
+        let mut svr = self.connect_server(None)?;
 
         let mut isync = Isync::new();
         isync.set_id(target_id.into());
@@ -105,7 +94,7 @@ impl Client {
 
         let local_addr = svr.local_addr().unwrap();
 
-        let s = Self::bind(local_addr)?;
+        let s = Self::bind(local_addr.as_socket().unwrap())?;
         s.connect(&target_addr.into())?;
 
         Ok(s.into())
@@ -137,11 +126,12 @@ impl Client {
     }
 
     pub fn listen(&mut self) -> Result<()> {
-        let svr_sk = self.connect_server()?;
-        let local_addr = svr_sk.local_addr().unwrap().as_socket().unwrap();
+        let listener = Self::bind(self.choose_bind_addr()?)?;
+        listener.listen(10)?;
 
-        let listener = Self::bind(local_addr.into())?;
-        listener.listen(1)?;
+        let local_addr = listener.local_addr().unwrap().as_socket().unwrap();
+
+        let svr_sk = self.connect_server(Some(local_addr))?;
 
         let ping_fn = |exit: Arc<(Mutex<bool>, Condvar)>,
                        id: String,
@@ -203,8 +193,7 @@ impl Client {
                         }
                         _ => continue,
                     },
-                    Err(e) => {
-                        println!("rndz server read fail. {}", e);
+                    Err(_) => {
                         let _ = listener.shutdown(Both);
                         break;
                     }

@@ -143,7 +143,10 @@ impl PeerHandler {
         let peers = self.peers.lock().unwrap();
         let p = match (*peers).get(dst_id) {
             Some(p) => Some(p),
-            None => None,
+            None => {
+                println!("{} not found", dst_id);
+                None
+            }
         };
 
         let mut rdr = Redirect::new();

@@ -66,9 +66,10 @@ $ rndz client --id c2 --server-addr rndz_server:8888 --remote-peer c1
 
 Because it rely on socket option `SO_REUSEADDR` and `SO_REUSEPORT` [behavior](https://stackoverflow.com/questions/14388706/how-do-so-reuseaddr-and-so-reuseport-differ/14388707#14388707),  and [`connected` UDP socket](https://blog.cloudflare.com/everything-you-ever-wanted-to-know-about-udp-sockets-but-were-afraid-to-ask-part-1/), it doesn't not work on all platform.
 
-Test pass on linux; Only `Client::connect()` works on windows.. 
+Test pass on linux; `udp::Client::listen()` not works on windows.. 
 
 
-### see also 
+### used in projects
 [quic-tun](https://github.com/optman/quic-tun)
+[minivtun-rs](https://github.com/optman/minivtun-rs/tree/rndz)
 

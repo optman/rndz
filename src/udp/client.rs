@@ -12,10 +12,10 @@ use std::thread::spawn;
 use std::time::{Duration, Instant};
 
 pub struct Client {
-    svr_sk: Socket,
+    svr_sk: Option<Socket>,
     server_addr: SocketAddr,
     id: String,
-    peer_sk: UdpSocket,
+    peer_sk: Socket,
     local_addr: SocketAddr,
     peer_addr: Option<SocketAddr>,
     exit: Arc<AtomicBool>,
@@ -24,12 +24,49 @@ pub struct Client {
 impl Drop for Client {
     fn drop(&mut self) {
         self.exit.store(true, Relaxed);
-        self.svr_sk.shutdown(Both).unwrap();
+        self.svr_sk.as_ref().map(|ref s| s.shutdown(Both).unwrap());
     }
 }
 
 impl Client {
     pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
+        let svr_sk = Self::connect_server(server_addr, local_addr)?;
+
+        let local_addr = svr_sk.local_addr().unwrap().as_socket().unwrap();
+        let domain = match local_addr {
+            SocketAddr::V4(_) => Domain::IPV4,
+            SocketAddr::V6(_) => Domain::IPV6,
+        };
+
+        let peer_sk = Self::create_socket(domain)?;
+        //DON'T bind now, for Windows can't works well with two same port sockets.
+
+        Ok(Self {
+            server_addr: svr_sk.peer_addr().unwrap().as_socket().unwrap(),
+            svr_sk: Some(svr_sk),
+            id: id.into(),
+            peer_sk: peer_sk,
+            local_addr: local_addr,
+            peer_addr: None,
+            exit: Default::default(),
+        })
+    }
+
+    #[allow(dead_code)]
+    pub fn as_socket(&self) -> UdpSocket {
+        self.peer_sk.try_clone().unwrap().into()
+    }
+
+    #[allow(dead_code)]
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        Some(self.local_addr)
+    }
+
+    pub fn peer_addr(&self) -> Option<SocketAddr> {
+        self.peer_addr
+    }
+
+    fn connect_server(server_addr: &str, local_addr: Option<SocketAddr>) -> Result<Socket> {
         let server_addr = server_addr
             .to_socket_addrs()?
             .next()
@@ -43,50 +80,21 @@ impl Client {
             },
         };
 
-        let svr_sk = Self::bind_socket(local_addr)?;
-        svr_sk.connect(&server_addr.into())?;
-
-        let local_addr = svr_sk.local_addr().unwrap().as_socket().unwrap();
-        let peer_sk = Self::bind_socket(local_addr)?;
-
-        Ok(Self {
-            svr_sk: svr_sk,
-            server_addr: server_addr.into(),
-            id: id.into(),
-            peer_sk: peer_sk.into(),
-            local_addr: local_addr,
-            peer_addr: None,
-            exit: Default::default(),
-        })
-    }
-
-    #[allow(dead_code)]
-    pub fn as_socket_mut(&mut self) -> &mut UdpSocket {
-        &mut self.peer_sk
-    }
-
-    pub fn as_socket(&self) -> &UdpSocket {
-        &self.peer_sk
-    }
-
-    #[allow(dead_code)]
-    pub fn local_addr(&self) -> Option<SocketAddr> {
-        Some(self.local_addr)
-    }
-
-    pub fn peer_addr(&self) -> Option<SocketAddr> {
-        self.peer_addr
-    }
-
-    fn bind_socket(local_addr: SocketAddr) -> Result<Socket> {
         let domain = match local_addr {
             SocketAddr::V4(_) => Domain::IPV4,
             SocketAddr::V6(_) => Domain::IPV6,
         };
 
+        let svr_sk = Self::create_socket(domain)?;
+        svr_sk.bind(&local_addr.into())?;
+        svr_sk.connect(&server_addr.into())?;
+
+        Ok(svr_sk)
+    }
+
+    fn create_socket(domain: Domain) -> Result<Socket> {
         let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).unwrap();
         socket.set_reuse_address(true)?;
-        socket.bind(&local_addr.into())?;
 
         Ok(socket)
     }
@@ -100,13 +108,26 @@ impl Client {
 
     fn recv_resp(&mut self) -> Result<Response> {
         let mut buf = unsafe { MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init() };
-        let n = self.svr_sk.recv(&mut buf)?;
+        let n = self.svr_sk.as_ref().unwrap().recv(&mut buf)?;
         let buf = unsafe { (&buf as *const _ as *const [u8; 1500]).read() };
         let resp = Response::parse_from_bytes(&buf[..n])?;
         Ok(resp)
     }
 
     pub fn connect(&mut self, target_id: &str) -> Result<()> {
+        if self.svr_sk.is_none() {
+            //This is a reconnect
+            self.svr_sk = Some(Self::connect_server(
+                &self.server_addr.to_string(),
+                Some(self.local_addr),
+            )?);
+            //From now on, there are two same port socket, WINDOWS will confuse!
+
+            //NOTE: DON'T reconnect on WINDOWS!!!!
+            #[cfg(windows)]
+            println!("WARNING: reconnect not works on WINDOWS!!!");
+        }
+
         let mut isync = Isync::new();
         isync.set_id(target_id.into());
 
@@ -116,11 +137,13 @@ impl Client {
         let isync = req.write_to_bytes()?;
 
         self.svr_sk
+            .as_ref()
+            .unwrap()
             .set_read_timeout(Some(Duration::from_secs(10)))?;
 
         let mut peer_addr = None;
         for _ in 0..3 {
-            self.svr_sk.send(isync.as_ref())?;
+            self.svr_sk.as_ref().unwrap().send(isync.as_ref())?;
 
             match self.recv_resp() {
                 Ok(resp) => {
@@ -145,16 +168,23 @@ impl Client {
 
         self.peer_addr = Some(
             peer_addr
-                .ok_or(Error::new(Other, "rndz server not response"))?
+                .ok_or(Error::new(Other, "no response"))?
                 .parse()
                 .map_err(|_| Error::new(Other, "rndz server response invalid peer address"))?,
         );
 
-        self.peer_sk.connect(self.peer_addr.as_ref().unwrap())
+        //we don't need svr_sk any more, to prevent interferce with peer_sk on WINDOWS, we drop it.
+        self.svr_sk = None;
+
+        self.peer_sk.bind(&self.local_addr.into())?;
+        self.peer_sk.connect(&self.peer_addr.unwrap().into())
     }
 
     pub fn listen(&mut self) -> Result<()> {
-        let mut svr_sk = self.svr_sk.try_clone().unwrap();
+        #[cfg(windows)]
+        println!("WARNING: listen not works on WINDOWS!!!");
+
+        let mut svr_sk = self.svr_sk.as_ref().unwrap().try_clone().unwrap();
         let myid = self.id.clone();
         let server_addr = self.server_addr.clone();
 
@@ -213,7 +243,7 @@ impl Client {
             }
         });
 
-        Ok(())
+        self.peer_sk.bind(&self.local_addr.into())
     }
 
     fn send_rsync(socket: &mut Socket, myid: &str, target_id: &str, addr: SocketAddr) {
