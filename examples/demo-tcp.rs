@@ -12,18 +12,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         thread::spawn(move || Server::new(server_addr).unwrap().run().unwrap());
     }
 
-    thread::spawn(move || loop {
+    let t = thread::spawn(move || {
         let server_addr = server_addr.clone();
         let mut c = Client::new(server_addr, "c1", None).unwrap();
-        match c.listen() {
-            Ok(_) => {
-                while let Ok((mut s, _)) = c.accept() {
+        loop {
+            match c.listen() {
+                Ok(_) => {
+                    let (mut s, _) = c.accept().unwrap();
                     s.write(b"hello").unwrap();
+                    break;
                 }
-            }
-            _ => {
-                thread::sleep(Duration::from_secs(1));
-                continue;
+                _ => {
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
             }
         }
     });
@@ -38,6 +40,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let mut buf = [0u8; 5];
     s.read(&mut buf)?;
+
+    t.join().unwrap();
 
     Ok(())
 }

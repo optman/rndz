@@ -15,5 +15,3 @@ protobuf-codegen-pure = "2"
 structopt="*"
 protobuf="*"
 socket2={version="*", features=["all"]}
-
-

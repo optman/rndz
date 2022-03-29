@@ -58,13 +58,15 @@ fn run_client(opt: ClientOpt) -> Result<()> {
 
         match opt.remote_peer {
             Some(peer) => {
-                let (socket, addr) = c.connect(&peer)?;
-                socket.send_to(b"hello", addr)?;
+                c.connect(&peer)?;
+                let peer_addr = c.peer_addr().unwrap();
+                c.as_socket().send_to(b"hello", peer_addr)?;
             }
             None => {
-                let s = c.listen()?;
+                c.listen()?;
+
                 let mut buf = [0u8; 1500];
-                while let Ok((n, addr)) = s.recv_from(&mut buf) {
+                while let Ok((n, addr)) = c.as_socket().recv_from(&mut buf) {
                     println!("receive {} bytes from {}", n, addr.to_string());
                 }
             }

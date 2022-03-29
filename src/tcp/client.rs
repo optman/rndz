@@ -4,15 +4,24 @@ use crate::proto::{
 use protobuf::Message;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Read, Result, Write};
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::thread;
+use std::net::{Shutdown::Both, SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::spawn;
 use std::time::Duration;
 
 pub struct Client {
     server_addr: String,
     id: String,
     listener: Option<Socket>,
+    svr_sk: Option<Socket>,
     local_addr: Option<SocketAddr>,
+    exit: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl Drop for Client {
+    fn drop(&mut self) {
+        self.shutdown().unwrap();
+    }
 }
 
 impl Client {
@@ -20,8 +29,10 @@ impl Client {
         Ok(Self {
             server_addr: server_addr.into(),
             id: id.into(),
-            listener: None,
             local_addr: local_addr,
+            listener: None,
+            svr_sk: None,
+            exit: Default::default(),
         })
     }
 
@@ -126,51 +137,94 @@ impl Client {
     }
 
     pub fn listen(&mut self) -> Result<()> {
-        let mut svr = self.connect_server()?;
-        let local_addr = svr.local_addr().unwrap().as_socket().unwrap();
+        let svr_sk = self.connect_server()?;
+        let local_addr = svr_sk.local_addr().unwrap().as_socket().unwrap();
 
-        let ping_fn = |id: String, s: &mut dyn Write| -> Result<()> {
+        let listener = Self::bind(local_addr.into())?;
+        listener.listen(1)?;
+
+        let ping_fn = |exit: Arc<(Mutex<bool>, Condvar)>,
+                       id: String,
+                       s: &mut dyn Write,
+                       listener: Socket|
+         -> Result<()> {
             loop {
-                Self::write_req(id.clone(), s, ReqCmd::Ping(Ping::new()))?;
-                thread::sleep(Duration::from_secs(10));
+                let (exit, cond) = &*exit;
+                if *exit.lock().unwrap() {
+                    break;
+                }
+
+                match Self::write_req(id.clone(), s, ReqCmd::Ping(Ping::new())) {
+                    Ok(_) => {
+                        let _ = cond.wait_timeout(exit.lock().unwrap(), Duration::from_secs(10));
+                    }
+                    Err(_) => {
+                        listener.shutdown(Both).unwrap();
+                        break;
+                    }
+                }
             }
+
+            Ok(())
         };
 
         let id = self.id.clone();
-        let mut w = svr.try_clone()?;
-        thread::spawn(move || {
-            ping_fn(id, &mut w).unwrap();
+        let mut w = svr_sk.try_clone()?;
+        let exit = self.exit.clone();
+        let l = listener.try_clone().unwrap();
+        spawn(move || {
+            ping_fn(exit, id, &mut w, l).unwrap();
         });
 
-        let recv_fn = |local_addr: SocketAddr, r: &mut dyn Read| -> Result<()> {
+        let recv_fn = |exit: Arc<(Mutex<bool>, Condvar)>,
+                       local_addr: SocketAddr,
+                       r: &mut dyn Read,
+                       listener: Socket|
+         -> Result<()> {
             loop {
-                match Self::read_resp(r)?.cmd {
-                    Some(RespCmd::Pong(_)) => {}
-                    Some(RespCmd::Fsync(fsync)) => {
-                        let dst_addr: SocketAddr = fsync
-                            .get_addr()
-                            .parse()
-                            .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
+                let (exit, _) = &*exit;
+                if *exit.lock().unwrap() {
+                    break;
+                }
+                match Self::read_resp(r) {
+                    Ok(resp) => match resp.cmd {
+                        Some(RespCmd::Pong(_)) => {}
+                        Some(RespCmd::Fsync(fsync)) => {
+                            let dst_addr: SocketAddr = fsync
+                                .get_addr()
+                                .parse()
+                                .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
 
-                        let s = Self::bind(local_addr.clone().into())?;
-                        let _ = s.connect_timeout(&dst_addr.into(), Duration::from_secs(1));
+                            let _ = Self::bind(local_addr.clone().into())
+                                .map(|s| {
+                                    s.connect_timeout(&dst_addr.into(), Duration::from_secs(1))
+                                })
+                                .map_err(|e| println!("{}", e));
+                        }
+                        _ => continue,
+                    },
+                    Err(e) => {
+                        println!("rndz server read fail. {}", e);
+                        let _ = listener.shutdown(Both);
+                        break;
                     }
-                    _ => continue,
                 }
             }
+            Ok(())
         };
 
         {
+            let exit = self.exit.clone();
             let local_addr = local_addr.clone();
-            thread::spawn(move || {
-                recv_fn(local_addr, &mut svr).unwrap();
+            let mut r = svr_sk.try_clone()?;
+            let l = listener.try_clone().unwrap();
+            spawn(move || {
+                let _ = recv_fn(exit, local_addr, &mut r, l);
             });
         }
 
-        let s = Self::bind(local_addr.into())?;
-        s.listen(1)?;
-
-        self.listener = Some(s);
+        self.listener = Some(listener);
+        self.svr_sk = Some(svr_sk);
 
         Ok(())
     }
@@ -181,5 +235,15 @@ impl Client {
             .ok_or(Error::new(Other, "not listening"))?
             .accept()
             .map(|(s, a)| (s.into(), a.as_socket().unwrap()))
+    }
+
+    pub fn shutdown(&mut self) -> Result<()> {
+        let (exit, cond) = &*self.exit;
+        *exit.lock().unwrap() = true;
+        cond.notify_all();
+
+        let _ = self.listener.take().map(|l| l.shutdown(Both));
+        let _ = self.svr_sk.take().map(|s| s.shutdown(Both));
+        Ok(())
     }
 }

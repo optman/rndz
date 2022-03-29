@@ -23,7 +23,7 @@ client2
 ```rust
 use rndz::tcp::Client;
 let c2 = Client::new(rndz_server_addr, "c2", None)?;
-let (stream, addr) = c.connect("c1")?;
+let stream = c.connect("c1")?;
 ```
 
 ### pair two udp socket
@@ -33,16 +33,16 @@ client1
 use rndz::udp::Client;
 
 let c1 = Client::new(rndz_server_addr, "c1", None)?;
-let socket = c1.listen()?;
-socket.recv_from(...)?;
+c1.listen()?;
+c1.as_socket().recv_from(...)?;
 ```
 
 client2
 ```rust
 use rndz::udp::Client;
 let c2 = Client::new(rndz_server_addr, "c2", None)?;
-let (socket, addr) = c.connect("c1")?;
-socket.send_to(b'hello', addr)?;
+c.connect("c1")?;
+c.as_socket().send(b'hello')?;
 ```
 
 ### test
