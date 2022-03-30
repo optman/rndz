@@ -14,6 +14,7 @@ use std::{thread, thread::JoinHandle};
 pub struct Server {
     listener: TcpListener,
     peers: PeerMap,
+    count: u64,
 }
 
 impl Server {
@@ -23,10 +24,16 @@ impl Server {
         Ok(Self {
             listener: listener,
             peers: Default::default(),
+            count: 0,
         })
     }
 
-    pub fn run(self) -> Result<()> {
+    fn next_id(&mut self) -> u64 {
+        self.count += 1;
+        self.count
+    }
+
+    pub fn run(mut self) -> Result<()> {
         while let Ok((stream, _addr)) = self.listener.accept() {
             stream
                 .set_read_timeout(Some(Duration::from_secs(30)))
@@ -39,11 +46,13 @@ impl Server {
             let h = PeerHandler {
                 stream: stream,
                 peers: self.peers.clone(),
-                id: "".to_string(),
+                peer_id: "".to_string(),
                 req_rx: rx,
                 req_tx: tx,
                 read_thread: None,
+                id: self.next_id(),
             };
+
             thread::spawn(move || h.handle_stream());
         }
 
@@ -52,6 +61,7 @@ impl Server {
 }
 
 struct PeerState {
+    id: u64,
     last_ping: Instant,
     //_connect_time: Instant,
     req_tx: SyncSender<Request>,
@@ -63,7 +73,8 @@ type PeerMap = Arc<Mutex<HashMap<String, PeerState>>>;
 struct PeerHandler {
     stream: TcpStream,
     peers: PeerMap,
-    id: String,
+    peer_id: String,
+    id: u64,
     req_tx: SyncSender<Request>,
     req_rx: Receiver<Request>,
     read_thread: Option<JoinHandle<()>>,
@@ -121,17 +132,27 @@ impl PeerHandler {
     }
 
     fn handle_ping(&mut self, src_id: String, _ping: Ping) -> Result<()> {
-        self.id = src_id;
+        self.peer_id = src_id;
         {
             let mut peers = self.peers.lock().unwrap();
-            let mut p = peers.entry(self.id.clone()).or_insert_with(|| PeerState {
-                req_tx: self.req_tx.clone(),
-                last_ping: Instant::now(),
-                addr: self.stream.peer_addr().unwrap(),
-            });
+
+            if match (*peers).get(&self.peer_id) {
+                Some(p) => p.id != self.id,
+                _ => false,
+            } {
+                peers.remove(&self.peer_id);
+            }
+
+            let mut p = peers
+                .entry(self.peer_id.clone())
+                .or_insert_with(|| PeerState {
+                    id: self.id,
+                    req_tx: self.req_tx.clone(),
+                    last_ping: Instant::now(),
+                    addr: self.stream.peer_addr().unwrap(),
+                });
 
             p.last_ping = Instant::now();
-            p.addr = self.stream.peer_addr().unwrap();
         }
 
         self.send_response(RespCmd::Pong(Pong::new()))
