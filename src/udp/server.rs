@@ -2,7 +2,7 @@ use protobuf::Message;
 use std::collections::HashMap;
 use std::io::Result;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::proto::{
     Fsync, Isync, Ping, Pong, Redirect, Request, Request_oneof_cmd as ReqCmd, Response,
@@ -27,6 +27,7 @@ impl Default for Client {
 pub struct Server {
     socket: UdpSocket,
     clients: HashMap<String, Client>,
+    next_gc: Instant,
 }
 
 impl Server {
@@ -36,17 +37,25 @@ impl Server {
         Ok(Self {
             socket: socket,
             clients: Default::default(),
+            next_gc: Self::next_gc(),
         })
     }
 
     pub fn run(mut self) -> Result<()> {
         let mut buf = [0; 1500];
 
+        self.socket
+            .set_read_timeout(Some(Duration::from_secs(30)))?;
+
         loop {
             if let Ok((size, addr)) = self.socket.recv_from(&mut buf) {
                 if let Ok(req) = Request::parse_from_bytes(&buf[..size]) {
                     self.handle_request(req, addr);
                 }
+            }
+
+            if Instant::now() > self.next_gc {
+                self.gc();
             }
         }
     }
@@ -56,6 +65,7 @@ impl Server {
             Some(ReqCmd::Ping(ping)) => self.handle_ping(req.id, ping, addr),
             Some(ReqCmd::Isync(isync)) => self.handle_isync(req.id, isync, addr),
             Some(ReqCmd::Rsync(rsync)) => self.handle_rsync(req.id, rsync, addr),
+            Some(ReqCmd::Bye(_)) => self.handle_bye(req.id),
             _ => {
                 println!("unknown cmd {:?}", req)
             }
@@ -112,5 +122,20 @@ impl Server {
         } else {
             println!("rsync could not find target {}", target_id);
         }
+    }
+
+    fn handle_bye(&mut self, id: String) {
+        self.clients.remove(&id);
+    }
+
+    fn next_gc() -> Instant {
+        Instant::now() + Duration::from_secs(60)
+    }
+
+    fn gc(&mut self) {
+        let expire = Instant::now() - Duration::from_secs(60);
+        self.clients.retain(|_, c| expire < c.last_ping);
+
+        self.next_gc = Self::next_gc();
     }
 }

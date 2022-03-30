@@ -7,6 +7,7 @@ message Request{
       Isync Isync = 3;
 	  Fsync Fsync = 4;
    	  Rsync Rsync = 5;
+	  Bye Bye = 6;
     }
 }
 
@@ -42,4 +43,7 @@ message Fsync{
 
 message Rsync{
 	string id = 1;
+}
+
+message Bye{
 }

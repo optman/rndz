@@ -46,6 +46,7 @@ pub enum Request_oneof_cmd {
     Isync(Isync),
     Fsync(Fsync),
     Rsync(Rsync),
+    Bye(Bye),
 }
 
 impl Request {
@@ -274,6 +275,55 @@ impl Request {
             Rsync::new()
         }
     }
+
+    // .Bye Bye = 6;
+
+
+    pub fn get_Bye(&self) -> &Bye {
+        match self.cmd {
+            ::std::option::Option::Some(Request_oneof_cmd::Bye(ref v)) => v,
+            _ => <Bye as ::protobuf::Message>::default_instance(),
+        }
+    }
+    pub fn clear_Bye(&mut self) {
+        self.cmd = ::std::option::Option::None;
+    }
+
+    pub fn has_Bye(&self) -> bool {
+        match self.cmd {
+            ::std::option::Option::Some(Request_oneof_cmd::Bye(..)) => true,
+            _ => false,
+        }
+    }
+
+    // Param is passed by value, moved
+    pub fn set_Bye(&mut self, v: Bye) {
+        self.cmd = ::std::option::Option::Some(Request_oneof_cmd::Bye(v))
+    }
+
+    // Mutable pointer to the field.
+    pub fn mut_Bye(&mut self) -> &mut Bye {
+        if let ::std::option::Option::Some(Request_oneof_cmd::Bye(_)) = self.cmd {
+        } else {
+            self.cmd = ::std::option::Option::Some(Request_oneof_cmd::Bye(Bye::new()));
+        }
+        match self.cmd {
+            ::std::option::Option::Some(Request_oneof_cmd::Bye(ref mut v)) => v,
+            _ => panic!(),
+        }
+    }
+
+    // Take field
+    pub fn take_Bye(&mut self) -> Bye {
+        if self.has_Bye() {
+            match self.cmd.take() {
+                ::std::option::Option::Some(Request_oneof_cmd::Bye(v)) => v,
+                _ => panic!(),
+            }
+        } else {
+            Bye::new()
+        }
+    }
 }
 
 impl ::protobuf::Message for Request {
@@ -294,6 +344,11 @@ impl ::protobuf::Message for Request {
             }
         }
         if let Some(Request_oneof_cmd::Rsync(ref v)) = self.cmd {
+            if !v.is_initialized() {
+                return false;
+            }
+        }
+        if let Some(Request_oneof_cmd::Bye(ref v)) = self.cmd {
             if !v.is_initialized() {
                 return false;
             }
@@ -332,6 +387,12 @@ impl ::protobuf::Message for Request {
                     }
                     self.cmd = ::std::option::Option::Some(Request_oneof_cmd::Rsync(is.read_message()?));
                 },
+                6 => {
+                    if wire_type != ::protobuf::wire_format::WireTypeLengthDelimited {
+                        return ::std::result::Result::Err(::protobuf::rt::unexpected_wire_type(wire_type));
+                    }
+                    self.cmd = ::std::option::Option::Some(Request_oneof_cmd::Bye(is.read_message()?));
+                },
                 _ => {
                     ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
                 },
@@ -365,6 +426,10 @@ impl ::protobuf::Message for Request {
                     let len = v.compute_size();
                     my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
                 },
+                &Request_oneof_cmd::Bye(ref v) => {
+                    let len = v.compute_size();
+                    my_size += 1 + ::protobuf::rt::compute_raw_varint32_size(len) + len;
+                },
             };
         }
         my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
@@ -395,6 +460,11 @@ impl ::protobuf::Message for Request {
                 },
                 &Request_oneof_cmd::Rsync(ref v) => {
                     os.write_tag(5, ::protobuf::wire_format::WireTypeLengthDelimited)?;
+                    os.write_raw_varint32(v.get_cached_size())?;
+                    v.write_to_with_cached_sizes(os)?;
+                },
+                &Request_oneof_cmd::Bye(ref v) => {
+                    os.write_tag(6, ::protobuf::wire_format::WireTypeLengthDelimited)?;
                     os.write_raw_varint32(v.get_cached_size())?;
                     v.write_to_with_cached_sizes(os)?;
                 },
@@ -463,6 +533,11 @@ impl ::protobuf::Message for Request {
                 Request::has_Rsync,
                 Request::get_Rsync,
             ));
+            fields.push(::protobuf::reflect::accessor::make_singular_message_accessor::<_, Bye>(
+                "Bye",
+                Request::has_Bye,
+                Request::get_Bye,
+            ));
             ::protobuf::reflect::MessageDescriptor::new_pb_name::<Request>(
                 "Request",
                 fields,
@@ -480,6 +555,7 @@ impl ::protobuf::Message for Request {
 impl ::protobuf::Clear for Request {
     fn clear(&mut self) {
         self.id.clear();
+        self.cmd = ::std::option::Option::None;
         self.cmd = ::std::option::Option::None;
         self.cmd = ::std::option::Option::None;
         self.cmd = ::std::option::Option::None;
@@ -1853,22 +1929,139 @@ impl ::protobuf::reflect::ProtobufValue for Rsync {
     }
 }
 
+#[derive(PartialEq,Clone,Default)]
+pub struct Bye {
+    // special fields
+    pub unknown_fields: ::protobuf::UnknownFields,
+    pub cached_size: ::protobuf::CachedSize,
+}
+
+impl<'a> ::std::default::Default for &'a Bye {
+    fn default() -> &'a Bye {
+        <Bye as ::protobuf::Message>::default_instance()
+    }
+}
+
+impl Bye {
+    pub fn new() -> Bye {
+        ::std::default::Default::default()
+    }
+}
+
+impl ::protobuf::Message for Bye {
+    fn is_initialized(&self) -> bool {
+        true
+    }
+
+    fn merge_from(&mut self, is: &mut ::protobuf::CodedInputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        while !is.eof()? {
+            let (field_number, wire_type) = is.read_tag_unpack()?;
+            match field_number {
+                _ => {
+                    ::protobuf::rt::read_unknown_or_skip_group(field_number, wire_type, is, self.mut_unknown_fields())?;
+                },
+            };
+        }
+        ::std::result::Result::Ok(())
+    }
+
+    // Compute sizes of nested messages
+    #[allow(unused_variables)]
+    fn compute_size(&self) -> u32 {
+        let mut my_size = 0;
+        my_size += ::protobuf::rt::unknown_fields_size(self.get_unknown_fields());
+        self.cached_size.set(my_size);
+        my_size
+    }
+
+    fn write_to_with_cached_sizes(&self, os: &mut ::protobuf::CodedOutputStream<'_>) -> ::protobuf::ProtobufResult<()> {
+        os.write_unknown_fields(self.get_unknown_fields())?;
+        ::std::result::Result::Ok(())
+    }
+
+    fn get_cached_size(&self) -> u32 {
+        self.cached_size.get()
+    }
+
+    fn get_unknown_fields(&self) -> &::protobuf::UnknownFields {
+        &self.unknown_fields
+    }
+
+    fn mut_unknown_fields(&mut self) -> &mut ::protobuf::UnknownFields {
+        &mut self.unknown_fields
+    }
+
+    fn as_any(&self) -> &dyn (::std::any::Any) {
+        self as &dyn (::std::any::Any)
+    }
+    fn as_any_mut(&mut self) -> &mut dyn (::std::any::Any) {
+        self as &mut dyn (::std::any::Any)
+    }
+    fn into_any(self: ::std::boxed::Box<Self>) -> ::std::boxed::Box<dyn (::std::any::Any)> {
+        self
+    }
+
+    fn descriptor(&self) -> &'static ::protobuf::reflect::MessageDescriptor {
+        Self::descriptor_static()
+    }
+
+    fn new() -> Bye {
+        Bye::new()
+    }
+
+    fn descriptor_static() -> &'static ::protobuf::reflect::MessageDescriptor {
+        static descriptor: ::protobuf::rt::LazyV2<::protobuf::reflect::MessageDescriptor> = ::protobuf::rt::LazyV2::INIT;
+        descriptor.get(|| {
+            let fields = ::std::vec::Vec::new();
+            ::protobuf::reflect::MessageDescriptor::new_pb_name::<Bye>(
+                "Bye",
+                fields,
+                file_descriptor_proto()
+            )
+        })
+    }
+
+    fn default_instance() -> &'static Bye {
+        static instance: ::protobuf::rt::LazyV2<Bye> = ::protobuf::rt::LazyV2::INIT;
+        instance.get(Bye::new)
+    }
+}
+
+impl ::protobuf::Clear for Bye {
+    fn clear(&mut self) {
+        self.unknown_fields.clear();
+    }
+}
+
+impl ::std::fmt::Debug for Bye {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        ::protobuf::text_format::fmt(self, f)
+    }
+}
+
+impl ::protobuf::reflect::ProtobufValue for Bye {
+    fn as_ref(&self) -> ::protobuf::reflect::ReflectValueRef {
+        ::protobuf::reflect::ReflectValueRef::Message(self)
+    }
+}
+
 static file_descriptor_proto_data: &'static [u8] = b"\
-    \n\nrndz.proto\"\xa9\x01\n\x07Request\x12\x10\n\x02id\x18\x01\x20\x01(\t\
+    \n\nrndz.proto\"\xc5\x01\n\x07Request\x12\x10\n\x02id\x18\x01\x20\x01(\t\
     R\x02idB\0\x12\x1d\n\x04Ping\x18\x02\x20\x01(\x0b2\x05.PingH\0R\x04PingB\
     \0\x12\x20\n\x05Isync\x18\x03\x20\x01(\x0b2\x06.IsyncH\0R\x05IsyncB\0\
     \x12\x20\n\x05Fsync\x18\x04\x20\x01(\x0b2\x06.FsyncH\0R\x05FsyncB\0\x12\
-    \x20\n\x05Rsync\x18\x05\x20\x01(\x0b2\x06.RsyncH\0R\x05RsyncB\0B\x05\n\
-    \x03cmd:\0\"\x08\n\x04Ping:\0\"\x1b\n\x05Isync\x12\x10\n\x02id\x18\x01\
-    \x20\x01(\tR\x02idB\0:\0\"\x91\x01\n\x08Response\x12\x10\n\x02id\x18\x01\
-    \x20\x01(\tR\x02idB\0\x12\x1d\n\x04Pong\x18\x02\x20\x01(\x0b2\x05.PongH\
-    \0R\x04PongB\0\x12)\n\x08Redirect\x18\x03\x20\x01(\x0b2\t.RedirectH\0R\
-    \x08RedirectB\0\x12\x20\n\x05Fsync\x18\x04\x20\x01(\x0b2\x06.FsyncH\0R\
-    \x05FsyncB\0B\x05\n\x03cmd:\0\"\x08\n\x04Pong:\0\"4\n\x08Redirect\x12\
-    \x10\n\x02id\x18\x01\x20\x01(\tR\x02idB\0\x12\x14\n\x04addr\x18\x02\x20\
-    \x01(\tR\x04addrB\0:\0\"1\n\x05Fsync\x12\x10\n\x02id\x18\x01\x20\x01(\tR\
-    \x02idB\0\x12\x14\n\x04addr\x18\x02\x20\x01(\tR\x04addrB\0:\0\"\x1b\n\
-    \x05Rsync\x12\x10\n\x02id\x18\x01\x20\x01(\tR\x02idB\0:\0B\0b\x06proto3\
+    \x20\n\x05Rsync\x18\x05\x20\x01(\x0b2\x06.RsyncH\0R\x05RsyncB\0\x12\x1a\
+    \n\x03Bye\x18\x06\x20\x01(\x0b2\x04.ByeH\0R\x03ByeB\0B\x05\n\x03cmd:\0\"\
+    \x08\n\x04Ping:\0\"\x1b\n\x05Isync\x12\x10\n\x02id\x18\x01\x20\x01(\tR\
+    \x02idB\0:\0\"\x91\x01\n\x08Response\x12\x10\n\x02id\x18\x01\x20\x01(\tR\
+    \x02idB\0\x12\x1d\n\x04Pong\x18\x02\x20\x01(\x0b2\x05.PongH\0R\x04PongB\
+    \0\x12)\n\x08Redirect\x18\x03\x20\x01(\x0b2\t.RedirectH\0R\x08RedirectB\
+    \0\x12\x20\n\x05Fsync\x18\x04\x20\x01(\x0b2\x06.FsyncH\0R\x05FsyncB\0B\
+    \x05\n\x03cmd:\0\"\x08\n\x04Pong:\0\"4\n\x08Redirect\x12\x10\n\x02id\x18\
+    \x01\x20\x01(\tR\x02idB\0\x12\x14\n\x04addr\x18\x02\x20\x01(\tR\x04addrB\
+    \0:\0\"1\n\x05Fsync\x12\x10\n\x02id\x18\x01\x20\x01(\tR\x02idB\0\x12\x14\
+    \n\x04addr\x18\x02\x20\x01(\tR\x04addrB\0:\0\"\x1b\n\x05Rsync\x12\x10\n\
+    \x02id\x18\x01\x20\x01(\tR\x02idB\0:\0\"\x07\n\x03Bye:\0B\0b\x06proto3\
 ";
 
 static file_descriptor_proto_lazy: ::protobuf::rt::LazyV2<::protobuf::descriptor::FileDescriptorProto> = ::protobuf::rt::LazyV2::INIT;

@@ -1,4 +1,7 @@
-use crate::proto::{Isync, Ping, Request, Response, Response_oneof_cmd as RespCmd, Rsync};
+use crate::proto::{
+    Bye, Isync, Ping, Request, Request_oneof_cmd as ReqCmd, Response,
+    Response_oneof_cmd as RespCmd, Rsync,
+};
 use protobuf::Message;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Result};
@@ -24,7 +27,10 @@ pub struct Client {
 impl Drop for Client {
     fn drop(&mut self) {
         self.exit.store(true, Relaxed);
-        self.svr_sk.as_ref().map(|ref s| s.shutdown(Both).unwrap());
+        self.svr_sk.take().map(|mut s| {
+            Self::send_cmd(&mut s, &self.id, ReqCmd::Bye(Bye::new()), self.server_addr);
+            s.shutdown(Both).unwrap();
+        });
     }
 }
 
@@ -250,12 +256,14 @@ impl Client {
         let mut rsync = Rsync::new();
         rsync.set_id(target_id.to_string());
 
-        let mut resp = Request::new();
-        resp.set_id(myid.to_string());
-        resp.set_Rsync(rsync);
+        Self::send_cmd(socket, myid, ReqCmd::Rsync(rsync), addr);
+    }
 
-        let b = resp.write_to_bytes().unwrap();
+    fn send_cmd(socket: &mut Socket, myid: &str, cmd: ReqCmd, addr: SocketAddr) {
+        let mut req = Request::new();
+        req.set_id(myid.to_string());
+        req.cmd = Some(cmd);
 
-        let _ = socket.send_to(b.as_ref(), &addr.into());
+        let _ = socket.send_to(req.write_to_bytes().unwrap().as_ref(), &addr.into());
     }
 }

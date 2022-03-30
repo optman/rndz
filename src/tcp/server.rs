@@ -1,15 +1,15 @@
 use crate::proto::{
-    Fsync, Isync, Ping, Pong, Redirect, Request, Request_oneof_cmd as ReqCmd, Response,
+    Bye, Fsync, Isync, Ping, Pong, Redirect, Request, Request_oneof_cmd as ReqCmd, Response,
     Response_oneof_cmd as RespCmd,
 };
 use protobuf::Message;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind::Other, Read, Result, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown::Both, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
-use std::{thread, thread::JoinHandle};
 
 pub struct Server {
     listener: TcpListener,
@@ -49,7 +49,6 @@ impl Server {
                 peer_id: "".to_string(),
                 req_rx: rx,
                 req_tx: tx,
-                read_thread: None,
                 id: self.next_id(),
             };
 
@@ -63,7 +62,6 @@ impl Server {
 struct PeerState {
     id: u64,
     last_ping: Instant,
-    //_connect_time: Instant,
     req_tx: SyncSender<Request>,
     addr: SocketAddr,
 }
@@ -77,21 +75,25 @@ struct PeerHandler {
     id: u64,
     req_tx: SyncSender<Request>,
     req_rx: Receiver<Request>,
-    read_thread: Option<JoinHandle<()>>,
 }
 
 impl PeerHandler {
     fn handle_stream(mut self) {
-        {
+        let read_thread = {
             let mut stream = self.stream.try_clone().unwrap();
             let req_tx = self.req_tx.clone();
-            self.read_thread = Some(thread::spawn(move || loop {
+            thread::spawn(move || loop {
                 match Self::read_req(&mut stream) {
                     Ok(req) => req_tx.send(req).unwrap(),
-                    _ => return,
+                    _ => {
+                        let mut bye = Request::new();
+                        bye.set_Bye(Bye::new());
+                        let _ = req_tx.send(bye);
+                        break;
+                    }
                 }
-            }));
-        }
+            })
+        };
 
         while let Ok(req) = self.req_rx.recv() {
             let src_id = req.get_id().to_string();
@@ -99,11 +101,23 @@ impl PeerHandler {
                 Some(ReqCmd::Ping(ping)) => self.handle_ping(src_id, ping),
                 Some(ReqCmd::Isync(isync)) => self.handle_isync(src_id, isync),
                 Some(ReqCmd::Fsync(fsync)) => self.handle_fsync(fsync),
+                Some(ReqCmd::Bye(_)) => break,
                 _ => Ok(()),
             } {
                 break;
             }
         }
+
+        let _ = self.stream.shutdown(Both);
+
+        let mut peers = self.peers.lock().unwrap();
+        if let Some(p) = (*peers).get(&self.peer_id) {
+            if p.id == self.id {
+                peers.remove(&self.peer_id);
+            }
+        }
+
+        let _ = read_thread.join();
     }
 
     fn read_req(stream: &mut TcpStream) -> Result<Request> {
