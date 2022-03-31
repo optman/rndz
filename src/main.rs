@@ -1,3 +1,4 @@
+use log;
 use std::io::{Read, Result, Write};
 use std::net::SocketAddr;
 use std::thread;
@@ -38,6 +39,10 @@ struct ServerOpt {
 async fn main() -> Result<()> {
     let opt: Opt = StructOpt::from_args();
 
+    env_logger::init_from_env(
+        env_logger::Env::default().filter_or(env_logger::DEFAULT_FILTER_ENV, "info"),
+    );
+
     match opt {
         Opt::Server(opt) => run_server(opt).await,
         Opt::Client(opt) => run_client(opt),
@@ -67,7 +72,7 @@ fn run_client(opt: ClientOpt) -> Result<()> {
 
                 let mut buf = [0u8; 1500];
                 while let Ok((n, addr)) = c.as_socket().recv_from(&mut buf) {
-                    println!("receive {} bytes from {}", n, addr.to_string());
+                    log::debug!("receive {} bytes from {}", n, addr.to_string());
                 }
             }
         }
@@ -77,14 +82,14 @@ fn run_client(opt: ClientOpt) -> Result<()> {
         match opt.remote_peer {
             Some(peer) => {
                 let mut stream = c.connect(&peer)?;
-                println!("connect success");
+                log::debug!("connect success");
                 let mut buf = [0u8; 5];
                 stream.read(&mut buf)?;
             }
             None => {
                 c.listen()?;
                 while let Ok((mut stream, addr)) = c.accept() {
-                    println!("accept {}", addr.to_string());
+                    log::debug!("accept {}", addr.to_string());
                     thread::spawn(move || {
                         let _ = stream.write_all(b"hello");
                     });

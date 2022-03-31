@@ -180,6 +180,8 @@ impl Client {
                     Ok(resp) => match resp.cmd {
                         Some(RespCmd::Pong(_)) => {}
                         Some(RespCmd::Fsync(fsync)) => {
+                            log::debug!("fsync {}", fsync.get_id());
+
                             let dst_addr: SocketAddr = fsync
                                 .get_addr()
                                 .parse()
@@ -189,7 +191,7 @@ impl Client {
                                 .map(|s| {
                                     s.connect_timeout(&dst_addr.into(), Duration::from_secs(1))
                                 })
-                                .map_err(|e| println!("{}", e));
+                                .map_err(|e| log::debug!("{}", e));
                         }
                         _ => continue,
                     },

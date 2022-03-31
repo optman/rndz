@@ -2,6 +2,7 @@ use crate::proto::{
     Bye, Isync, Ping, Request, Request_oneof_cmd as ReqCmd, Response,
     Response_oneof_cmd as RespCmd, Rsync,
 };
+use log;
 use protobuf::Message;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Result};
@@ -129,7 +130,7 @@ impl Client {
 
             //NOTE: DON'T reconnect on WINDOWS!!!!
             #[cfg(windows)]
-            println!("WARNING: reconnect not works on WINDOWS!!!");
+            log::warn!("WARNING: reconnect not works on WINDOWS!!!");
         }
 
         let mut isync = Isync::new();
@@ -186,7 +187,7 @@ impl Client {
 
     pub fn listen(&mut self) -> Result<()> {
         #[cfg(windows)]
-        println!("WARNING: listen not works on WINDOWS!!!");
+        log::warn!("WARNING: listen not works on WINDOWS!!!");
 
         let mut svr_sk = self.svr_sk.as_ref().unwrap().try_clone().unwrap();
         let myid = self.id.clone();
@@ -235,11 +236,16 @@ impl Client {
                 match resp.cmd {
                     Some(RespCmd::Pong(_)) => {}
                     Some(RespCmd::Fsync(fsync)) => {
+                        log::debug!("fsync {}", fsync.get_id());
+
                         Self::send_rsync(&mut svr_sk, &myid, fsync.get_id(), server_addr);
 
                         match fsync.get_addr().parse() {
                             Ok(addr) => Self::send_rsync(&mut svr_sk, &myid, fsync.get_id(), addr),
-                            _ => continue,
+                            _ => {
+                                log::debug!("invalid fsync addr");
+                                continue;
+                            }
                         };
                     }
                     _ => {}

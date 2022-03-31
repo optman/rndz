@@ -1,3 +1,4 @@
+use log;
 use protobuf::Message;
 use std::collections::HashMap;
 use std::io::Result;
@@ -67,7 +68,7 @@ impl Server {
             Some(ReqCmd::Rsync(rsync)) => self.handle_rsync(req.id, rsync, addr),
             Some(ReqCmd::Bye(_)) => self.handle_bye(req.id),
             _ => {
-                println!("unknown cmd {:?}", req)
+                log::debug!("unknown cmd {:?}", req)
             }
         };
     }
@@ -82,6 +83,8 @@ impl Server {
     }
 
     fn handle_ping(&mut self, id: String, _ping: Ping, addr: SocketAddr) {
+        log::trace!("ping {}", id);
+
         let mut c = self
             .clients
             .entry(id.clone())
@@ -94,6 +97,8 @@ impl Server {
 
     fn handle_isync(&mut self, id: String, isync: Isync, addr: SocketAddr) {
         let target_id = isync.get_id();
+        log::debug!("isync {} -> {}", id, target_id);
+
         if let Some(t) = self.clients.get(target_id).map(|t| *t) {
             let mut s = self.clients.entry(id.clone()).or_insert(Client::default());
             s.last_ping = Instant::now();
@@ -104,7 +109,7 @@ impl Server {
             fsync.set_addr(addr.to_string());
             self.send_response(RespCmd::Fsync(fsync), target_id.to_string(), t.addr);
         } else {
-            println!("target id {} not found", target_id);
+            log::debug!("target id {} not found", target_id);
             let mut rdr = Redirect::new();
             rdr.set_id(target_id.to_string());
             self.send_response(RespCmd::Redirect(rdr), id.clone(), addr);
@@ -113,6 +118,7 @@ impl Server {
 
     fn handle_rsync(&mut self, id: String, rsync: Rsync, addr: SocketAddr) {
         let target_id = rsync.get_id();
+        log::debug!("rsync {} -> {}", id, target_id);
 
         if let Some(c) = self.clients.get(target_id).map(|c| *c) {
             let mut rdr = Redirect::new();
@@ -120,11 +126,12 @@ impl Server {
             rdr.set_addr(addr.to_string());
             self.send_response(RespCmd::Redirect(rdr), target_id.to_string(), c.addr);
         } else {
-            println!("rsync could not find target {}", target_id);
+            log::debug!("rsync could not find target {}", target_id);
         }
     }
 
     fn handle_bye(&mut self, id: String) {
+        log::debug!("bye {}", id);
         self.clients.remove(&id);
     }
 
@@ -134,7 +141,13 @@ impl Server {
 
     fn gc(&mut self) {
         let expire = Instant::now() - Duration::from_secs(60);
-        self.clients.retain(|_, c| expire < c.last_ping);
+        self.clients.retain(|id, c| {
+            let ne = expire < c.last_ping;
+            if !ne {
+                log::debug!("expired {}", id);
+            }
+            ne
+        });
 
         self.next_gc = Self::next_gc();
     }

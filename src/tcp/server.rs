@@ -2,6 +2,7 @@ use crate::proto::{
     Bye, Fsync, Isync, Ping, Pong, Redirect, Request, Request_oneof_cmd as ReqCmd, Response,
     Response_oneof_cmd as RespCmd,
 };
+use log;
 use protobuf::Message;
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind::Other, Result};
@@ -99,6 +100,10 @@ impl<'a> PeerHandler<'a> {
                 peers.remove(&self.peer_id);
             }
         }
+
+        if self.peer_id != "" {
+            log::debug!("peer {} disconnect", self.peer_id);
+        }
     }
 
     async fn read_reqs(mut r: ReadHalf<'a>, req_tx: Sender<Request>) -> Result<()> {
@@ -166,6 +171,8 @@ impl<'a> PeerHandler<'a> {
     }
 
     async fn handle_ping(&mut self, src_id: String, _ping: Ping) -> Result<()> {
+        log::trace!("ping {}", src_id);
+
         self.peer_id = src_id;
         {
             let mut peers = self.peers.lock().unwrap();
@@ -194,6 +201,7 @@ impl<'a> PeerHandler<'a> {
 
     async fn handle_isync(&mut self, src_id: String, isync: Isync) -> Result<()> {
         let dst_id = isync.get_id();
+        log::debug!("isync {} -> {}", src_id, dst_id);
 
         let mut rdr = Redirect::new();
         rdr.set_id(dst_id.to_string());
@@ -203,7 +211,7 @@ impl<'a> PeerHandler<'a> {
             let p = match (*peers).get(dst_id) {
                 Some(p) => Some(p),
                 None => {
-                    println!("{} not found", dst_id);
+                    log::debug!("{} not found", dst_id);
                     None
                 }
             };
@@ -232,6 +240,7 @@ impl<'a> PeerHandler<'a> {
     }
 
     async fn handle_fsync(&mut self, fsync: Fsync) -> Result<()> {
+        log::debug!("fsync {} -> {} ", fsync.get_id(), self.peer_id);
         self.send_response(RespCmd::Fsync(fsync)).await
     }
 }

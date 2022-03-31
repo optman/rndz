@@ -12,6 +12,8 @@ edition = "2021"
 protobuf-codegen-pure = "2" 
 
 [dependencies]
+log="*"
+env_logger="*"
 structopt="*"
 protobuf="*"
 socket2={version="*", features=["all"]}
