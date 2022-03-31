@@ -58,12 +58,10 @@ impl Client {
         })
     }
 
-    #[allow(dead_code)]
     pub fn as_socket(&self) -> UdpSocket {
         self.peer_sk.try_clone().unwrap().into()
     }
 
-    #[allow(dead_code)]
     pub fn local_addr(&self) -> Option<SocketAddr> {
         Some(self.local_addr)
     }

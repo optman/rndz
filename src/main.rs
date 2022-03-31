@@ -3,9 +3,7 @@ use std::net::SocketAddr;
 use std::thread;
 use structopt::StructOpt;
 
-mod proto;
-mod tcp;
-mod udp;
+use rndz::{tcp, udp};
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "rndz")]
