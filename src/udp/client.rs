@@ -28,10 +28,7 @@ pub struct Client {
 impl Drop for Client {
     fn drop(&mut self) {
         self.exit.store(true, Relaxed);
-        self.svr_sk.take().map(|mut s| {
-            Self::send_cmd(&mut s, &self.id, ReqCmd::Bye(Bye::new()), self.server_addr);
-            s.shutdown(Both).unwrap();
-        });
+        self.drop_server_sk();
     }
 }
 
@@ -95,6 +92,13 @@ impl Client {
         svr_sk.connect(&server_addr.into())?;
 
         Ok(svr_sk)
+    }
+
+    fn drop_server_sk(&mut self) {
+        self.svr_sk.take().map(|mut s| {
+            Self::send_cmd(&mut s, &self.id, ReqCmd::Bye(Bye::new()), self.server_addr);
+            s.shutdown(Both).unwrap();
+        });
     }
 
     fn create_socket(domain: Domain) -> Result<Socket> {
@@ -179,7 +183,7 @@ impl Client {
         );
 
         //we don't need svr_sk any more, to prevent interferce with peer_sk on WINDOWS, we drop it.
-        self.svr_sk = None;
+        self.drop_server_sk();
 
         self.peer_sk.bind(&self.local_addr.into())?;
         self.peer_sk.connect(&self.peer_addr.unwrap().into())
