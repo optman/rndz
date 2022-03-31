@@ -2,6 +2,7 @@ use std::io::{Read, Result, Write};
 use std::net::SocketAddr;
 use std::thread;
 use structopt::StructOpt;
+use tokio::task;
 
 use rndz::{tcp, udp};
 
@@ -33,21 +34,22 @@ struct ServerOpt {
     listen_addr: SocketAddr,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let opt: Opt = StructOpt::from_args();
 
     match opt {
-        Opt::Server(opt) => run_server(opt),
+        Opt::Server(opt) => run_server(opt).await,
         Opt::Client(opt) => run_client(opt),
     }
 }
 
-fn run_server(opt: ServerOpt) -> Result<()> {
+async fn run_server(opt: ServerOpt) -> Result<()> {
     let s = udp::Server::new(opt.listen_addr)?;
-    thread::spawn(move || s.run().unwrap());
+    task::spawn(async { s.run().unwrap() });
 
-    let s = tcp::Server::new(opt.listen_addr)?;
-    s.run()
+    let s = tcp::Server::new(opt.listen_addr).await?;
+    s.run().await
 }
 
 fn run_client(opt: ClientOpt) -> Result<()> {

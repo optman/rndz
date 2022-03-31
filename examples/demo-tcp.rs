@@ -7,9 +7,10 @@ use std::time::Duration;
 fn main() -> Result<(), Box<dyn Error>> {
     let server_addr = "127.0.0.1:8888";
 
+    let rt = tokio::runtime::Runtime::new().unwrap();
     {
         let server_addr = server_addr.clone();
-        thread::spawn(move || Server::new(server_addr).unwrap().run().unwrap());
+        rt.spawn(async move { Server::new(server_addr).await.unwrap().run().await });
     }
 
     let t = thread::spawn(move || {

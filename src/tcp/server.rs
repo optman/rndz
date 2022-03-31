@@ -4,12 +4,20 @@ use crate::proto::{
 };
 use protobuf::Message;
 use std::collections::HashMap;
-use std::io::{Error, ErrorKind::Other, Read, Result, Write};
-use std::net::{Shutdown::Both, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::io::{Error, ErrorKind::Other, Result};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{
+        tcp::{ReadHalf, WriteHalf},
+        TcpListener, ToSocketAddrs,
+    },
+    select, task,
+    time::timeout,
+};
 
 pub struct Server {
     listener: TcpListener,
@@ -18,8 +26,8 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new<A: ToSocketAddrs>(listen_addr: A) -> Result<Self> {
-        let listener = TcpListener::bind(listen_addr)?;
+    pub async fn new<A: ToSocketAddrs>(listen_addr: A) -> Result<Self> {
+        let listener = TcpListener::bind(listen_addr).await?;
 
         Ok(Self {
             listener: listener,
@@ -33,26 +41,25 @@ impl Server {
         self.count
     }
 
-    pub fn run(mut self) -> Result<()> {
-        while let Ok((stream, _addr)) = self.listener.accept() {
-            stream
-                .set_read_timeout(Some(Duration::from_secs(30)))
-                .unwrap();
-            stream
-                .set_write_timeout(Some(Duration::from_secs(30)))
-                .unwrap();
+    pub async fn run(mut self) -> Result<()> {
+        while let Ok((mut stream, _addr)) = self.listener.accept().await {
+            let id = self.next_id();
+            let peers = self.peers.clone();
 
-            let (tx, rx) = sync_channel(1);
-            let h = PeerHandler {
-                stream: stream,
-                peers: self.peers.clone(),
-                peer_id: "".to_string(),
-                req_rx: rx,
-                req_tx: tx,
-                id: self.next_id(),
-            };
+            task::spawn(async move {
+                let (tx, rx) = channel(1);
+                let (r, w) = stream.split();
+                let h = PeerHandler {
+                    stream: w,
+                    peers: peers,
+                    peer_id: "".to_string(),
+                    req_rx: rx,
+                    req_tx: tx,
+                    id: id,
+                };
 
-            thread::spawn(move || h.handle_stream());
+                h.handle_stream(r).await;
+            });
         }
 
         Ok(())
@@ -62,53 +69,29 @@ impl Server {
 struct PeerState {
     id: u64,
     last_ping: Instant,
-    req_tx: SyncSender<Request>,
+    req_tx: Sender<Request>,
     addr: SocketAddr,
 }
 
 type PeerMap = Arc<Mutex<HashMap<String, PeerState>>>;
 
-struct PeerHandler {
-    stream: TcpStream,
+struct PeerHandler<'a> {
+    stream: WriteHalf<'a>,
     peers: PeerMap,
     peer_id: String,
     id: u64,
-    req_tx: SyncSender<Request>,
+    req_tx: Sender<Request>,
     req_rx: Receiver<Request>,
 }
 
-impl PeerHandler {
-    fn handle_stream(mut self) {
-        let read_thread = {
-            let mut stream = self.stream.try_clone().unwrap();
-            let req_tx = self.req_tx.clone();
-            thread::spawn(move || loop {
-                match Self::read_req(&mut stream) {
-                    Ok(req) => req_tx.send(req).unwrap(),
-                    _ => {
-                        let mut bye = Request::new();
-                        bye.set_Bye(Bye::new());
-                        let _ = req_tx.send(bye);
-                        break;
-                    }
-                }
-            })
-        };
+impl<'a> PeerHandler<'a> {
+    async fn handle_stream(mut self, r: ReadHalf<'a>) {
+        let req_tx = self.req_tx.clone();
 
-        while let Ok(req) = self.req_rx.recv() {
-            let src_id = req.get_id().to_string();
-            if let Err(_) = match req.cmd {
-                Some(ReqCmd::Ping(ping)) => self.handle_ping(src_id, ping),
-                Some(ReqCmd::Isync(isync)) => self.handle_isync(src_id, isync),
-                Some(ReqCmd::Fsync(fsync)) => self.handle_fsync(fsync),
-                Some(ReqCmd::Bye(_)) => break,
-                _ => Ok(()),
-            } {
-                break;
-            }
+        select! {
+            _ = Self::read_reqs(r, req_tx) => {},
+            _ = self.handle_cmds()=> {},
         }
-
-        let _ = self.stream.shutdown(Both);
 
         let mut peers = self.peers.lock().unwrap();
         if let Some(p) = (*peers).get(&self.peer_id) {
@@ -116,36 +99,73 @@ impl PeerHandler {
                 peers.remove(&self.peer_id);
             }
         }
-
-        let _ = read_thread.join();
     }
 
-    fn read_req(stream: &mut TcpStream) -> Result<Request> {
+    async fn read_reqs(mut r: ReadHalf<'a>, req_tx: Sender<Request>) -> Result<()> {
+        loop {
+            match timeout(Duration::from_secs(30), Self::read_req(&mut r)).await? {
+                Ok(req) => req_tx
+                    .send(req)
+                    .await
+                    .map_err(|_| Error::new(Other, "mpsc closed?")),
+                _ => {
+                    let mut bye = Request::new();
+                    bye.set_Bye(Bye::new());
+                    let _ = req_tx.send(bye);
+
+                    Err(Error::new(Other, "byte"))
+                }
+            }?;
+        }
+    }
+
+    async fn handle_cmds(&mut self) -> Result<()> {
+        loop {
+            match self.req_rx.recv().await {
+                Some(req) => {
+                    let src_id = req.get_id().to_string();
+                    match req.cmd {
+                        Some(ReqCmd::Ping(ping)) => self.handle_ping(src_id, ping).await,
+                        Some(ReqCmd::Isync(isync)) => self.handle_isync(src_id, isync).await,
+                        Some(ReqCmd::Fsync(fsync)) => self.handle_fsync(fsync).await,
+                        Some(ReqCmd::Bye(_)) => Err(Error::new(Other, "bye")),
+                        _ => Err(Error::new(Other, "uknown cmd")),
+                    }
+                }
+                _ => Err(Error::new(Other, "bye")),
+            }?;
+        }
+    }
+
+    async fn read_req(stream: &mut ReadHalf<'a>) -> Result<Request> {
         let mut buf = [0u8; 2];
-        stream.read_exact(&mut buf)?;
+        stream.read_exact(&mut buf).await?;
 
         let size = u16::from_be_bytes(buf).into();
         if size > 1500 {
             Err(Error::new(Other, "invalid message"))?;
         }
         let mut buf = vec![0u8; size];
-        stream.read_exact(&mut buf)?;
+        stream.read_exact(&mut buf).await?;
 
         Request::parse_from_bytes(&mut buf).map_err(|_| Error::new(Other, "invalid message"))
     }
 
-    fn send_response(&mut self, cmd: RespCmd) -> Result<()> {
+    async fn send_response(&mut self, cmd: RespCmd) -> Result<()> {
         let mut resp = Response::new();
         resp.cmd = Some(cmd);
 
         let vec = resp.write_to_bytes().unwrap();
 
-        let _ = self.stream.write_all(&(vec.len() as u16).to_be_bytes())?;
-        let _ = self.stream.write_all(&vec)?;
+        let _ = self
+            .stream
+            .write_all(&(vec.len() as u16).to_be_bytes())
+            .await?;
+        let _ = self.stream.write_all(&vec).await?;
         Ok(())
     }
 
-    fn handle_ping(&mut self, src_id: String, _ping: Ping) -> Result<()> {
+    async fn handle_ping(&mut self, src_id: String, _ping: Ping) -> Result<()> {
         self.peer_id = src_id;
         {
             let mut peers = self.peers.lock().unwrap();
@@ -169,42 +189,44 @@ impl PeerHandler {
             p.last_ping = Instant::now();
         }
 
-        self.send_response(RespCmd::Pong(Pong::new()))
+        self.send_response(RespCmd::Pong(Pong::new())).await
     }
 
-    fn handle_isync(&mut self, src_id: String, isync: Isync) -> Result<()> {
+    async fn handle_isync(&mut self, src_id: String, isync: Isync) -> Result<()> {
         let dst_id = isync.get_id();
-
-        let peers = self.peers.lock().unwrap();
-        let p = match (*peers).get(dst_id) {
-            Some(p) => Some(p),
-            None => {
-                println!("{} not found", dst_id);
-                None
-            }
-        };
 
         let mut rdr = Redirect::new();
         rdr.set_id(dst_id.to_string());
-        if let Some(p) = p {
-            rdr.set_addr(p.addr.to_string());
 
-            //forward
-            let mut fsync = Fsync::new();
-            fsync.set_id(src_id);
-            fsync.set_addr(self.stream.peer_addr().unwrap().to_string());
+        {
+            let peers = self.peers.lock().unwrap();
+            let p = match (*peers).get(dst_id) {
+                Some(p) => Some(p),
+                None => {
+                    println!("{} not found", dst_id);
+                    None
+                }
+            };
 
-            let mut freq = Request::new();
-            freq.set_Fsync(fsync);
+            if let Some(p) = p {
+                rdr.set_addr(p.addr.to_string());
 
-            let _ = p.req_tx.send(freq);
+                //forward
+                let mut fsync = Fsync::new();
+                fsync.set_id(src_id);
+                fsync.set_addr(self.stream.peer_addr().unwrap().to_string());
+
+                let mut freq = Request::new();
+                freq.set_Fsync(fsync);
+
+                let _ = p.req_tx.send(freq);
+            }
         }
-        drop(peers);
 
-        self.send_response(RespCmd::Redirect(rdr))
+        self.send_response(RespCmd::Redirect(rdr)).await
     }
 
-    fn handle_fsync(&mut self, fsync: Fsync) -> Result<()> {
-        self.send_response(RespCmd::Fsync(fsync))
+    async fn handle_fsync(&mut self, fsync: Fsync) -> Result<()> {
+        self.send_response(RespCmd::Fsync(fsync)).await
     }
 }
