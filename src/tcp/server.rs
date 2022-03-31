@@ -198,7 +198,7 @@ impl<'a> PeerHandler<'a> {
         let mut rdr = Redirect::new();
         rdr.set_id(dst_id.to_string());
 
-        {
+        if let Some((req_tx, freq)) = {
             let peers = self.peers.lock().unwrap();
             let p = match (*peers).get(dst_id) {
                 Some(p) => Some(p),
@@ -217,10 +217,15 @@ impl<'a> PeerHandler<'a> {
                 fsync.set_addr(self.stream.peer_addr().unwrap().to_string());
 
                 let mut freq = Request::new();
+
                 freq.set_Fsync(fsync);
 
-                let _ = p.req_tx.send(freq);
+                Some((p.req_tx.clone(), freq))
+            } else {
+                None
             }
+        } {
+            let _ = req_tx.send(freq).await;
         }
 
         self.send_response(RespCmd::Redirect(rdr)).await
