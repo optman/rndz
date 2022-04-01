@@ -4,7 +4,7 @@ use crate::proto::{
 use protobuf::Message;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Read, Result, Write};
-use std::net::{Shutdown::Both, SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{Shutdown::Both, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::spawn;
 use std::time::Duration;
@@ -39,6 +39,12 @@ impl Client {
             svr_sk: None,
             exit: Default::default(),
         })
+    }
+
+    pub fn as_socket(&self) -> Option<TcpListener> {
+        self.listener
+            .as_ref()
+            .map(|l| l.try_clone().unwrap().into())
     }
 
     fn choose_bind_addr(&self) -> Result<SocketAddr> {
