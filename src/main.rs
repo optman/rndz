@@ -51,7 +51,9 @@ async fn main() -> Result<()> {
 
 async fn run_server(opt: ServerOpt) -> Result<()> {
     let s = udp::Server::new(opt.listen_addr)?;
-    task::spawn(async { s.run().unwrap() });
+    task::spawn_blocking(|| {
+        s.run().unwrap();
+    });
 
     let s = tcp::Server::new(opt.listen_addr).await?;
     s.run().await
