@@ -10,7 +10,7 @@ use std::thread::spawn;
 use std::time::Duration;
 
 pub struct Client {
-    server_addr: SocketAddr,
+    server_addr: String,
     id: String,
     listener: Option<Socket>,
     svr_sk: Option<Socket>,
@@ -26,13 +26,8 @@ impl Drop for Client {
 
 impl Client {
     pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
-        let server_addr = server_addr
-            .to_socket_addrs()?
-            .next()
-            .ok_or(Error::new(Other, "server name resolve fail"))?;
-
         Ok(Self {
-            server_addr: server_addr,
+            server_addr: server_addr.to_owned(),
             id: id.into(),
             local_addr: local_addr,
             listener: None,
@@ -52,7 +47,13 @@ impl Client {
             return Ok(*addr);
         }
 
-        let local_addr = match self.server_addr {
+        let server_addr = self
+            .server_addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or(Error::new(Other, "server name resolve fail"))?;
+
+        let local_addr = match server_addr {
             SocketAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
             SocketAddr::V6(_) => "[::]:0".parse().unwrap(),
         };
@@ -62,7 +63,12 @@ impl Client {
 
     fn connect_server(&mut self, local_addr: Option<SocketAddr>) -> Result<socket2::Socket> {
         let svr = Self::bind(local_addr.unwrap_or(self.choose_bind_addr()?).into())?;
-        svr.connect(&self.server_addr.into())?;
+        let server_addr = self
+            .server_addr
+            .to_socket_addrs()?
+            .next()
+            .ok_or(Error::new(Other, "server name resolve fail"))?;
+        svr.connect(&server_addr.into())?;
         Ok(svr)
     }
 
@@ -193,7 +199,7 @@ impl Client {
                                 .parse()
                                 .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
 
-                            let _ = Self::bind(local_addr.clone().into())
+                            let _ = Self::bind(local_addr.into())
                                 .map(|s| {
                                     s.connect_timeout(&dst_addr.into(), Duration::from_secs(1))
                                 })

@@ -190,7 +190,7 @@ impl<'a> PeerHandler<'a> {
                     id: self.id,
                     req_tx: self.req_tx.clone(),
                     last_ping: Instant::now(),
-                    addr: self.stream.peer_addr().unwrap(),
+                    addr: self.stream.as_ref().peer_addr().unwrap(),
                 });
 
             p.last_ping = Instant::now();
@@ -222,7 +222,7 @@ impl<'a> PeerHandler<'a> {
                 //forward
                 let mut fsync = Fsync::new();
                 fsync.set_id(src_id);
-                fsync.set_addr(self.stream.peer_addr().unwrap().to_string());
+                fsync.set_addr(self.stream.as_ref().peer_addr().unwrap().to_string());
 
                 let mut freq = Request::new();
 

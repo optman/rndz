@@ -1,11 +1,13 @@
 use log;
-use std::io::{Read, Result, Write};
+use std::io::Result;
 use std::net::SocketAddr;
-use std::thread;
 use structopt::StructOpt;
-use tokio::task;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    task,
+};
 
-use rndz::{tcp, udp};
+use rndz::{r#async, tcp, udp};
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "rndz")]
@@ -45,7 +47,7 @@ async fn main() -> Result<()> {
 
     match opt {
         Opt::Server(opt) => run_server(opt).await,
-        Opt::Client(opt) => run_client(opt),
+        Opt::Client(opt) => run_client(opt).await,
     }
 }
 
@@ -59,7 +61,7 @@ async fn run_server(opt: ServerOpt) -> Result<()> {
     s.run().await
 }
 
-fn run_client(opt: ClientOpt) -> Result<()> {
+async fn run_client(opt: ClientOpt) -> Result<()> {
     if !opt.tcp {
         let mut c = udp::Client::new(&opt.server_addr, &opt.id, None)?;
 
@@ -79,21 +81,21 @@ fn run_client(opt: ClientOpt) -> Result<()> {
             }
         }
     } else {
-        let mut c = tcp::Client::new(&opt.server_addr, &opt.id, None)?;
+        let mut c = r#async::tcp::Client::new(&opt.server_addr, &opt.id, None)?;
 
         match opt.remote_peer {
             Some(peer) => {
-                let mut stream = c.connect(&peer)?;
+                let mut stream = c.connect(&peer).await?;
                 log::debug!("connect success");
                 let mut buf = [0u8; 5];
-                stream.read(&mut buf)?;
+                stream.read(&mut buf).await?;
             }
             None => {
-                c.listen()?;
-                while let Ok((mut stream, addr)) = c.accept() {
+                c.listen().await?;
+                while let Ok((mut stream, addr)) = c.accept().await {
                     log::debug!("accept {}", addr.to_string());
-                    thread::spawn(move || {
-                        let _ = stream.write_all(b"hello");
+                    task::spawn(async move {
+                        let _ = stream.write_all(b"hello").await;
                     });
                 }
             }

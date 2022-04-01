@@ -17,4 +17,4 @@ env_logger="*"
 structopt="*"
 protobuf="*"
 socket2={version="*", features=["all"]}
-tokio={version="*", features=["full"]}
+tokio={version="1", features=["full"]}
