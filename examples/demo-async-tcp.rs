@@ -1,4 +1,4 @@
-use rndz::r#async::tcp::Client;
+use rndz::tcp::AsyncClient;
 use rndz::tcp::Server;
 use std::error::Error;
 use std::time::Duration;
@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let t = {
         let server_addr = server_addr.clone();
         spawn(async move {
-            let mut c = Client::new(server_addr, "c1", None).unwrap();
+            let mut c = AsyncClient::new(server_addr, "c1", None).unwrap();
             loop {
                 match c.listen().await {
                     Ok(_) => {
@@ -37,7 +37,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         })
     };
 
-    let mut c = Client::new(server_addr, "c2", None)?;
+    let mut c = AsyncClient::new(server_addr, "c2", None)?;
     let mut s = loop {
         match c.connect("c1").await {
             Ok(s) => break s,

@@ -2,6 +2,8 @@ mod server;
 pub use server::Server;
 mod client;
 pub use client::Client;
+mod client_async;
+pub use client_async::Client as AsyncClient;
 
 #[cfg(test)]
 mod tests {

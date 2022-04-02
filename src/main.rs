@@ -7,7 +7,7 @@ use tokio::{
     task,
 };
 
-use rndz::{r#async, tcp, udp};
+use rndz::{tcp, udp};
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "rndz")]
@@ -81,7 +81,7 @@ async fn run_client(opt: ClientOpt) -> Result<()> {
             }
         }
     } else {
-        let mut c = r#async::tcp::Client::new(&opt.server_addr, &opt.id, None)?;
+        let mut c = tcp::AsyncClient::new(&opt.server_addr, &opt.id, None)?;
 
         match opt.remote_peer {
             Some(peer) => {
