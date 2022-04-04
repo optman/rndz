@@ -1,5 +1,6 @@
 use crate::proto::{
     Isync, Ping, Request, Request_oneof_cmd as ReqCmd, Response, Response_oneof_cmd as RespCmd,
+    Rsync,
 };
 use protobuf::Message;
 use std::io::{Error, ErrorKind::Other, Result};
@@ -14,6 +15,7 @@ use tokio::{
         TcpListener, TcpSocket, TcpStream,
     },
     select,
+    sync::mpsc::{channel, Receiver, Sender},
     sync::Notify,
     task::spawn,
     time::{sleep, timeout},
@@ -104,6 +106,8 @@ impl Client {
             _ => Err(Error::new(Other, "invalid server response"))?,
         };
 
+        log::debug!("Redirect {}", addr);
+
         let target_addr: SocketAddr = addr
             .parse()
             .map_err(|_| Error::new(Other, "target id not found"))?;
@@ -137,65 +141,77 @@ impl Client {
         Response::parse_from_bytes(&buf).map_err(|_| Error::new(Other, "invalid message"))
     }
 
-    async fn ping_fn(exit: Arc<Notify>, id: String, s: &mut OwnedWriteHalf) -> Result<()> {
-        loop {
-            if Self::write_req(id.clone(), s, ReqCmd::Ping(Ping::new()))
-                .await
-                .is_err()
-            {
-                exit.notify_waiters();
-                break;
-            }
+    async fn handle_resp(local_addr: SocketAddr, r: &mut OwnedReadHalf) -> Result<Option<ReqCmd>> {
+        let resp = Self::read_resp(r).await;
+        match resp {
+            Ok(resp) => match resp.cmd {
+                Some(RespCmd::Pong(_)) => Ok(None),
+                Some(RespCmd::Fsync(fsync)) => {
+                    log::debug!("fsync {}", fsync.get_id());
 
-            select! {
-                  _ = exit.notified() =>  break,
-                  _ = sleep(Duration::from_secs(10)) => (),
-            }
+                    let dst_addr: SocketAddr = fsync
+                        .get_addr()
+                        .parse()
+                        .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
+
+                    if let Ok(s) = Self::bind(local_addr.into()) {
+                        log::debug!("connect {} -> {}", local_addr, dst_addr);
+                        let _ = timeout(Duration::from_micros(1), s.connect(dst_addr)).await;
+                    }
+
+                    let mut rsync = Rsync::new();
+                    rsync.set_id(fsync.get_id().to_string());
+                    Ok(Some(ReqCmd::Rsync(rsync)))
+                }
+                _ => Ok(None),
+            },
+            Err(e) => Err(e),
         }
-
-        Ok(())
     }
 
-    async fn recv_fn(
+    async fn read_loop(
         exit: Arc<Notify>,
         local_addr: SocketAddr,
         r: &mut OwnedReadHalf,
-    ) -> Result<()> {
+        tx: Sender<ReqCmd>,
+    ) {
         loop {
             let resp = select! {
-                  _ = exit.notified() =>  break,
-                  resp = Self::read_resp(r) => resp,
+                 _ = exit.notified() =>  break,
+                 req= Self::handle_resp(local_addr, r) => req,
             };
 
-            match resp {
-                Ok(resp) => match resp.cmd {
-                    Some(RespCmd::Pong(_)) => {}
-                    Some(RespCmd::Fsync(fsync)) => {
-                        log::debug!("fsync {}", fsync.get_id());
+            let ok = match resp {
+                Ok(None) => true,
+                Ok(Some(req)) => tx.send(req).await.is_ok(),
+                Err(_) => false,
+            };
 
-                        let dst_addr: SocketAddr = fsync
-                            .get_addr()
-                            .parse()
-                            .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
-
-                        spawn(async move {
-                            if let Ok(s) = Self::bind(local_addr.into()) {
-                                let _ = timeout(Duration::from_secs(1), s.connect(dst_addr))
-                                    .await
-                                    .map_err(|e| log::debug!("{}", e));
-                            }
-                        });
-                    }
-                    _ => continue,
-                },
-                Err(_) => {
-                    exit.notify_waiters();
-                    break;
-                }
+            if !ok {
+                exit.notify_waiters();
+                break;
             }
         }
+    }
 
-        Ok(())
+    async fn write_loop(
+        exit: Arc<Notify>,
+        id: String,
+        w: &mut OwnedWriteHalf,
+        mut rx: Receiver<ReqCmd>,
+    ) {
+        loop {
+            let req = select! {
+                 _ = exit.notified() =>  break,
+                 _ = sleep(Duration::from_secs(10)) => Some(ReqCmd::Ping(Ping::new())),
+                 req = rx.recv() => req,
+            };
+
+            if req.is_none() || Self::write_req(id.clone(), w, req.unwrap()).await.is_err() {
+                exit.notify_waiters();
+                break;
+            }
+        }
     }
 
     pub async fn listen(&mut self) -> Result<()> {
@@ -205,18 +221,24 @@ impl Client {
 
         let svr_sk = self.connect_server(Some(local_addr)).await?;
         let (mut r, mut w) = svr_sk.into_split();
+        let (tx, rx) = channel(10);
 
-        let id = self.id.clone();
-        let exit = self.exit.clone();
-        spawn(async move {
-            Self::ping_fn(exit, id, &mut w).await.unwrap();
-        });
+        tx.send(ReqCmd::Ping(Ping::new())).await.unwrap();
 
-        let exit = self.exit.clone();
-        let local_addr = local_addr.clone();
-        spawn(async move {
-            Self::recv_fn(exit, local_addr, &mut r).await.unwrap();
-        });
+        {
+            let exit = self.exit.clone();
+            spawn(async move {
+                Self::read_loop(exit, local_addr, &mut r, tx).await;
+            });
+        }
+
+        {
+            let exit = self.exit.clone();
+            let id = self.id.clone();
+            spawn(async move {
+                Self::write_loop(exit, id, &mut w, rx).await;
+            });
+        }
 
         self.listener = Some(listener);
 

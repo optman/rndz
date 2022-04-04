@@ -87,14 +87,19 @@ async fn run_client(opt: ClientOpt) -> Result<()> {
             Some(peer) => {
                 let mut stream = c.connect(&peer).await?;
                 log::debug!("connect success");
+                let _ = stream.write_all(b"hello").await;
                 let mut buf = [0u8; 5];
-                stream.read(&mut buf).await?;
+                let n = stream.read(&mut buf).await.unwrap();
+                log::debug!("read {} bytes", n);
             }
             None => {
                 c.listen().await?;
                 while let Ok((mut stream, addr)) = c.accept().await {
                     log::debug!("accept {}", addr.to_string());
                     task::spawn(async move {
+                        let mut buf = [0u8; 5];
+                        let n = stream.read(&mut buf).await.unwrap();
+                        log::debug!("read {} bytes", n);
                         let _ = stream.write_all(b"hello").await;
                     });
                 }

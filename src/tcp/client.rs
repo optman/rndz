@@ -1,11 +1,12 @@
 use crate::proto::{
     Isync, Ping, Request, Request_oneof_cmd as ReqCmd, Response, Response_oneof_cmd as RespCmd,
+    Rsync,
 };
 use protobuf::Message;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Read, Result, Write};
 use std::net::{Shutdown::Both, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError::Timeout, SyncSender};
 use std::thread::spawn;
 use std::time::Duration;
 
@@ -15,7 +16,6 @@ pub struct Client {
     listener: Option<Socket>,
     svr_sk: Option<Socket>,
     local_addr: Option<SocketAddr>,
-    exit: Arc<(Mutex<bool>, Condvar)>,
 }
 
 impl Drop for Client {
@@ -32,7 +32,6 @@ impl Client {
             local_addr: local_addr,
             listener: None,
             svr_sk: None,
-            exit: Default::default(),
         })
     }
 
@@ -100,6 +99,8 @@ impl Client {
             _ => Err(Error::new(Other, "invalid server response"))?,
         };
 
+        log::debug!("Redirect {}", addr);
+
         let target_addr: SocketAddr = addr
             .parse()
             .map_err(|_| Error::new(Other, "target id not found"))?;
@@ -137,6 +138,71 @@ impl Client {
         Response::parse_from_bytes(&buf).map_err(|_| Error::new(Other, "invalid message"))
     }
 
+    fn write_loop(
+        id: String,
+        s: &mut dyn Write,
+        listener: Socket,
+        rx: Receiver<ReqCmd>,
+    ) -> Result<()> {
+        loop {
+            let req = match rx.recv_timeout(Duration::from_secs(10)) {
+                Ok(req) => req,
+                Err(Timeout) => ReqCmd::Ping(Ping::new()),
+                _ => break,
+            };
+
+            if Self::write_req(id.clone(), s, req).is_err() {
+                break;
+            }
+        }
+
+        let _ = listener.shutdown(Both);
+
+        Ok(())
+    }
+
+    fn read_loop(
+        local_addr: SocketAddr,
+        r: &mut dyn Read,
+        listener: Socket,
+        tx: SyncSender<ReqCmd>,
+    ) -> Result<()> {
+        loop {
+            let req = match Self::read_resp(r) {
+                Ok(resp) => match resp.cmd {
+                    Some(RespCmd::Pong(_)) => None,
+                    Some(RespCmd::Fsync(fsync)) => {
+                        log::debug!("fsync {}", fsync.get_id());
+
+                        let dst_addr: SocketAddr = fsync
+                            .get_addr()
+                            .parse()
+                            .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
+
+                        log::debug!("connect {} -> {}", local_addr, dst_addr);
+
+                        let _ = Self::bind(local_addr.into())
+                            .map(|s| s.connect_timeout(&dst_addr.into(), Duration::from_micros(1)));
+
+                        let mut rsync = Rsync::new();
+                        rsync.set_id(fsync.get_id().to_string());
+                        Some(ReqCmd::Rsync(rsync))
+                    }
+                    _ => None,
+                },
+                _ => break,
+            };
+
+            if let Some(req) = req {
+                tx.send(req).unwrap();
+            }
+        }
+
+        let _ = listener.shutdown(Both);
+
+        Ok(())
+    }
+
     pub fn listen(&mut self) -> Result<()> {
         let listener = Self::bind(self.choose_bind_addr()?)?;
         listener.listen(10)?;
@@ -145,85 +211,22 @@ impl Client {
 
         let svr_sk = self.connect_server(Some(local_addr))?;
 
-        let ping_fn = |exit: Arc<(Mutex<bool>, Condvar)>,
-                       id: String,
-                       s: &mut dyn Write,
-                       listener: Socket|
-         -> Result<()> {
-            loop {
-                let (exit, cond) = &*exit;
-                if *exit.lock().unwrap() {
-                    break;
-                }
+        let (tx, rx) = sync_channel(10);
 
-                match Self::write_req(id.clone(), s, ReqCmd::Ping(Ping::new())) {
-                    Ok(_) => {
-                        let _ = cond.wait_timeout(exit.lock().unwrap(), Duration::from_secs(10));
-                    }
-                    Err(_) => {
-                        listener.shutdown(Both).unwrap();
-                        break;
-                    }
-                }
-            }
-
-            Ok(())
-        };
-
-        let id = self.id.clone();
-        let mut w = svr_sk.try_clone()?;
-        let exit = self.exit.clone();
-        let l = listener.try_clone().unwrap();
-        spawn(move || {
-            ping_fn(exit, id, &mut w, l).unwrap();
-        });
-
-        let recv_fn = |exit: Arc<(Mutex<bool>, Condvar)>,
-                       local_addr: SocketAddr,
-                       r: &mut dyn Read,
-                       listener: Socket|
-         -> Result<()> {
-            loop {
-                let (exit, _) = &*exit;
-                if *exit.lock().unwrap() {
-                    break;
-                }
-                match Self::read_resp(r) {
-                    Ok(resp) => match resp.cmd {
-                        Some(RespCmd::Pong(_)) => {}
-                        Some(RespCmd::Fsync(fsync)) => {
-                            log::debug!("fsync {}", fsync.get_id());
-
-                            let dst_addr: SocketAddr = fsync
-                                .get_addr()
-                                .parse()
-                                .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
-
-                            let _ = Self::bind(local_addr.into())
-                                .map(|s| {
-                                    s.connect_timeout(&dst_addr.into(), Duration::from_secs(1))
-                                })
-                                .map_err(|e| log::debug!("{}", e));
-                        }
-                        _ => continue,
-                    },
-                    Err(_) => {
-                        let _ = listener.shutdown(Both);
-                        break;
-                    }
-                }
-            }
-            Ok(())
-        };
+        tx.send(ReqCmd::Ping(Ping::new())).unwrap();
 
         {
-            let exit = self.exit.clone();
+            let id = self.id.clone();
+            let mut w = svr_sk.try_clone()?;
+            let l = listener.try_clone().unwrap();
+            spawn(move || Self::write_loop(id, &mut w, l, rx).unwrap());
+        }
+
+        {
             let local_addr = local_addr.clone();
             let mut r = svr_sk.try_clone()?;
             let l = listener.try_clone().unwrap();
-            spawn(move || {
-                let _ = recv_fn(exit, local_addr, &mut r, l);
-            });
+            spawn(move || Self::read_loop(local_addr, &mut r, l, tx).unwrap());
         }
 
         self.listener = Some(listener);
@@ -241,10 +244,6 @@ impl Client {
     }
 
     pub fn shutdown(&mut self) -> Result<()> {
-        let (exit, cond) = &*self.exit;
-        *exit.lock().unwrap() = true;
-        cond.notify_all();
-
         let _ = self.listener.take().map(|l| l.shutdown(Both));
         let _ = self.svr_sk.take().map(|s| s.shutdown(Both));
         Ok(())
