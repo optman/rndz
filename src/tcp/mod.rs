@@ -1,8 +1,16 @@
+#[cfg(feature = "server")]
 mod server;
+#[cfg(feature = "server")]
 pub use server::Server;
+
+#[cfg(feature = "client")]
 mod client;
+#[cfg(feature = "client")]
 pub use client::Client;
+
+#[cfg(feature = "async")]
 mod client_async;
+#[cfg(feature = "async")]
 pub use client_async::Client as AsyncClient;
 
 #[cfg(test)]

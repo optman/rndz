@@ -1,6 +1,11 @@
+#[cfg(feature = "client")]
 mod client;
+#[cfg(feature = "client")]
 pub use client::Client;
+
+#[cfg(feature = "server")]
 mod server;
+#[cfg(feature = "server")]
 pub use server::Server;
 
 #[cfg(test)]
