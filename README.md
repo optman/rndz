@@ -68,8 +68,9 @@ Because it rely on socket option `SO_REUSEADDR` and `SO_REUSEPORT` [behavior](ht
 
 Test pass on linux; `udp::Client::listen()` not works on windows.. 
 
-
 ### used in projects
-[quic-tun](https://github.com/optman/quic-tun)
-[minivtun-rs](https://github.com/optman/minivtun-rs/tree/rndz)
+[quic-tun](https://github.com/optman/quic-tun)  a quic base port forward
 
+[minivtun-rs](https://github.com/optman/minivtun-rs/tree/rndz) a udp base vpn
+
+[rndz-go](https://github.com/optman/rndz-go) golang implement of rndz

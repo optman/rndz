@@ -70,6 +70,9 @@ async fn run_client(opt: ClientOpt) -> Result<()> {
                 c.connect(&peer)?;
                 let peer_addr = c.peer_addr().unwrap();
                 c.as_socket().send_to(b"hello", peer_addr)?;
+                let mut buf = [0u8; 1500];
+                let (n, addr) = c.as_socket().recv_from(&mut buf)?;
+                log::debug!("receive {} bytes from {}", n, addr.to_string());
             }
             None => {
                 c.listen()?;
@@ -77,6 +80,7 @@ async fn run_client(opt: ClientOpt) -> Result<()> {
                 let mut buf = [0u8; 1500];
                 while let Ok((n, addr)) = c.as_socket().recv_from(&mut buf) {
                     log::debug!("receive {} bytes from {}", n, addr.to_string());
+                    let _ = c.as_socket().send_to(&buf[..n], addr);
                 }
             }
         }
