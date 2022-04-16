@@ -7,15 +7,22 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Read, Result, Write};
 use std::net::{Shutdown::Both, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError::Timeout, SyncSender};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::spawn;
 use std::time::Duration;
+
+#[derive(Clone, Default)]
+struct Signal {
+    exit: bool,
+    broken: bool,
+}
 
 pub struct Client {
     server_addr: String,
     id: String,
     listener: Option<Socket>,
-    svr_sk: Option<Socket>,
     local_addr: Option<SocketAddr>,
+    signal: Arc<(Mutex<Signal>, Condvar)>,
 }
 
 impl Drop for Client {
@@ -31,7 +38,7 @@ impl Client {
             id: id.into(),
             local_addr: local_addr,
             listener: None,
-            svr_sk: None,
+            signal: Default::default(),
         })
     }
 
@@ -60,10 +67,9 @@ impl Client {
         Ok(local_addr)
     }
 
-    fn connect_server(&mut self, local_addr: Option<SocketAddr>) -> Result<socket2::Socket> {
-        let svr = Self::bind(local_addr.unwrap_or(self.choose_bind_addr()?).into())?;
-        let server_addr = self
-            .server_addr
+    fn connect_server(local_addr: SocketAddr, server_addr: &str) -> Result<socket2::Socket> {
+        let svr = Self::bind(local_addr.into())?;
+        let server_addr = server_addr
             .to_socket_addrs()?
             .next()
             .ok_or(Error::new(Other, "server name resolve fail"))?;
@@ -87,7 +93,7 @@ impl Client {
     }
 
     pub fn connect(&mut self, target_id: &str) -> Result<TcpStream> {
-        let mut svr = self.connect_server(None)?;
+        let mut svr = Self::connect_server(self.choose_bind_addr()?, &self.server_addr)?;
 
         let mut isync = Isync::new();
         isync.set_id(target_id.into());
@@ -138,12 +144,7 @@ impl Client {
         Response::parse_from_bytes(&buf).map_err(|_| Error::new(Other, "invalid message"))
     }
 
-    fn write_loop(
-        id: String,
-        s: &mut dyn Write,
-        listener: Socket,
-        rx: Receiver<ReqCmd>,
-    ) -> Result<()> {
+    fn write_loop(id: String, s: &mut dyn Write, rx: Receiver<ReqCmd>) -> Result<()> {
         loop {
             let req = match rx.recv_timeout(Duration::from_secs(10)) {
                 Ok(req) => req,
@@ -156,17 +157,10 @@ impl Client {
             }
         }
 
-        let _ = listener.shutdown(Both);
-
         Ok(())
     }
 
-    fn read_loop(
-        local_addr: SocketAddr,
-        r: &mut dyn Read,
-        listener: Socket,
-        tx: SyncSender<ReqCmd>,
-    ) -> Result<()> {
+    fn read_loop(local_addr: SocketAddr, r: &mut dyn Read, tx: SyncSender<ReqCmd>) -> Result<()> {
         loop {
             let req = match Self::read_resp(r) {
                 Ok(resp) => match resp.cmd {
@@ -198,39 +192,130 @@ impl Client {
             }
         }
 
-        let _ = listener.shutdown(Both);
-
         Ok(())
+    }
+
+    fn start_background(
+        id: String,
+        local_addr: SocketAddr,
+        server_addr: String,
+        signal: Arc<(Mutex<Signal>, Condvar)>,
+    ) -> Result<()> {
+        let svr_sk = Self::connect_server(local_addr, &server_addr)?;
+
+        let (tx, rx) = sync_channel(10);
+
+        tx.send(ReqCmd::Ping(Ping::new())).unwrap();
+
+        let mut hs = vec![];
+
+        hs.push({
+            let mut w = svr_sk.try_clone()?;
+            spawn(move || Self::write_loop(id, &mut w, rx).unwrap())
+        });
+
+        hs.push({
+            let local_addr = local_addr.clone();
+            let mut r = svr_sk.try_clone()?;
+            spawn(move || Self::read_loop(local_addr, &mut r, tx).unwrap())
+        });
+
+        {
+            let signal = signal.clone();
+            spawn(move || {
+                for h in hs {
+                    h.join().unwrap();
+                }
+                let (lock, cvar) = &*signal;
+                let mut signal = lock.lock().unwrap();
+                (*signal).broken = true;
+                cvar.notify_all();
+            });
+        }
+
+        {
+            let signal = signal.clone();
+            spawn(move || {
+                let (lock, cvar) = &*signal;
+                let mut signal = lock.lock().unwrap();
+                if (*signal).exit {
+                    let _ = svr_sk.shutdown(Both);
+                    return;
+                }
+                signal = cvar.wait(signal).unwrap();
+                if (*signal).exit {
+                    let _ = svr_sk.shutdown(Both);
+                }
+            });
+        }
+
+        return Ok(());
     }
 
     pub fn listen(&mut self) -> Result<()> {
         let listener = Self::bind(self.choose_bind_addr()?)?;
         listener.listen(10)?;
 
+        let id = self.id.clone();
         let local_addr = listener.local_addr().unwrap().as_socket().unwrap();
+        let server_addr = self.server_addr.clone();
+        let signal = self.signal.clone();
+        Self::start_background(
+            id.clone(),
+            local_addr.clone(),
+            server_addr.clone(),
+            signal.clone(),
+        )?;
 
-        let svr_sk = self.connect_server(Some(local_addr))?;
+        spawn(move || loop {
+            {
+                let (lock, cvar) = &*signal;
+                let mut signal = lock.lock().unwrap();
+                if (*signal).exit {
+                    return;
+                }
+                signal = cvar.wait(signal).unwrap();
+                if (*signal).exit {
+                    return;
+                }
 
-        let (tx, rx) = sync_channel(10);
+                assert_eq!((*signal).broken, true);
 
-        tx.send(ReqCmd::Ping(Ping::new())).unwrap();
+                (*signal).broken = false;
+            }
 
-        {
-            let id = self.id.clone();
-            let mut w = svr_sk.try_clone()?;
-            let l = listener.try_clone().unwrap();
-            spawn(move || Self::write_loop(id, &mut w, l, rx).unwrap());
-        }
+            log::debug!("connection with server is broken, try to reconnect.");
 
-        {
-            let local_addr = local_addr.clone();
-            let mut r = svr_sk.try_clone()?;
-            let l = listener.try_clone().unwrap();
-            spawn(move || Self::read_loop(local_addr, &mut r, l, tx).unwrap());
-        }
+            loop {
+                match Self::start_background(
+                    id.clone(),
+                    local_addr,
+                    server_addr.clone(),
+                    signal.clone(),
+                ) {
+                    Ok(_) => {
+                        log::debug!("connect server success");
+                        break;
+                    }
+                    Err(err) => log::debug!("connect server fail, retry later. {}", err),
+                };
+
+                let (lock, cvar) = &*signal;
+                let mut signal = lock.lock().unwrap();
+                if (*signal).exit {
+                    return;
+                }
+                signal = cvar
+                    .wait_timeout(signal, Duration::from_secs(120))
+                    .unwrap()
+                    .0;
+                if (*signal).exit {
+                    return;
+                }
+            }
+        });
 
         self.listener = Some(listener);
-        self.svr_sk = Some(svr_sk);
 
         Ok(())
     }
@@ -245,7 +330,12 @@ impl Client {
 
     pub fn shutdown(&mut self) -> Result<()> {
         let _ = self.listener.take().map(|l| l.shutdown(Both));
-        let _ = self.svr_sk.take().map(|s| s.shutdown(Both));
+
+        let (lock, cvar) = &*self.signal;
+        let mut signal = lock.lock().unwrap();
+        (*signal).exit = true;
+        cvar.notify_all();
+
         Ok(())
     }
 }
