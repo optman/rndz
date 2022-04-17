@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
+    join,
     net::{
         lookup_host,
         tcp::{OwnedReadHalf, OwnedWriteHalf},
@@ -68,9 +69,9 @@ impl Client {
         Ok(local_addr)
     }
 
-    async fn connect_server(&mut self, local_addr: Option<SocketAddr>) -> Result<TcpStream> {
-        let svr = Self::bind(local_addr.unwrap_or(self.choose_bind_addr().await?).into())?;
-        let server_addr = lookup_host(self.server_addr.clone())
+    async fn connect_server(local_addr: SocketAddr, server_addr: &str) -> Result<TcpStream> {
+        let svr = Self::bind(local_addr.into())?;
+        let server_addr = lookup_host(server_addr)
             .await?
             .next()
             .ok_or(Error::new(Other, "server name resolve fail"))?;
@@ -92,7 +93,7 @@ impl Client {
     }
 
     pub async fn connect(&mut self, target_id: &str) -> Result<TcpStream> {
-        let svr = self.connect_server(None).await?;
+        let svr = Self::connect_server(self.choose_bind_addr().await?, &self.server_addr).await?;
         let local_addr = svr.local_addr().unwrap();
         let (mut r, mut w) = svr.into_split();
 
@@ -172,13 +173,13 @@ impl Client {
     async fn read_loop(
         exit: Arc<Notify>,
         local_addr: SocketAddr,
-        r: &mut OwnedReadHalf,
+        mut r: OwnedReadHalf,
         tx: Sender<ReqCmd>,
     ) {
         loop {
             let resp = select! {
                  _ = exit.notified() =>  break,
-                 req= Self::handle_resp(local_addr, r) => req,
+                 req= Self::handle_resp(local_addr, &mut r) => req,
             };
 
             let ok = match resp {
@@ -188,7 +189,6 @@ impl Client {
             };
 
             if !ok {
-                exit.notify_waiters();
                 break;
             }
         }
@@ -197,7 +197,7 @@ impl Client {
     async fn write_loop(
         exit: Arc<Notify>,
         id: String,
-        w: &mut OwnedWriteHalf,
+        mut w: OwnedWriteHalf,
         mut rx: Receiver<ReqCmd>,
     ) {
         loop {
@@ -207,11 +207,55 @@ impl Client {
                  req = rx.recv() => req,
             };
 
-            if req.is_none() || Self::write_req(id.clone(), w, req.unwrap()).await.is_err() {
-                exit.notify_waiters();
+            if req.is_none()
+                || Self::write_req(id.clone(), &mut w, req.unwrap())
+                    .await
+                    .is_err()
+            {
                 break;
             }
         }
+    }
+
+    async fn start_background(
+        id: String,
+        local_addr: SocketAddr,
+        server_addr: String,
+        exit: Arc<Notify>,
+    ) -> Result<Arc<Notify>> {
+        let svr_sk = Self::connect_server(local_addr, &server_addr).await?;
+        let (r, w) = svr_sk.into_split();
+        let (tx, rx) = channel(10);
+
+        let broken: Arc<Notify> = Default::default();
+
+        tx.send(ReqCmd::Ping(Ping::new())).await.unwrap();
+
+        let rl = {
+            let exit = exit.clone();
+            spawn(async move {
+                Self::read_loop(exit, local_addr, r, tx).await;
+            })
+        };
+
+        let wl = {
+            let exit = exit.clone();
+            let id = id.clone();
+            spawn(async move {
+                Self::write_loop(exit, id, w, rx).await;
+            })
+        };
+
+        {
+            let broken = broken.clone();
+            spawn(async move {
+                let _ = join!(rl, wl);
+
+                broken.notify_waiters();
+            });
+        }
+
+        Ok(broken)
     }
 
     pub async fn listen(&mut self) -> Result<()> {
@@ -219,26 +263,47 @@ impl Client {
         let local_addr = listener.local_addr().unwrap();
         let listener = listener.listen(10)?;
 
-        let svr_sk = self.connect_server(Some(local_addr)).await?;
-        let (mut r, mut w) = svr_sk.into_split();
-        let (tx, rx) = channel(10);
+        let id = self.id.clone();
+        let server_addr = self.server_addr.clone();
+        let exit = self.exit.clone();
+        let mut broken =
+            Self::start_background(id.clone(), local_addr, server_addr.clone(), exit.clone())
+                .await?;
 
-        tx.send(ReqCmd::Ping(Ping::new())).await.unwrap();
+        spawn(async move {
+            loop {
+                select! {
+                    _ = exit.notified() => break,
+                    _ = broken.notified() => {},
+                };
 
-        {
-            let exit = self.exit.clone();
-            spawn(async move {
-                Self::read_loop(exit, local_addr, &mut r, tx).await;
-            });
-        }
+                log::debug!("connection with server is broken, try to reconnect");
 
-        {
-            let exit = self.exit.clone();
-            let id = self.id.clone();
-            spawn(async move {
-                Self::write_loop(exit, id, &mut w, rx).await;
-            });
-        }
+                broken = loop {
+                    match Self::start_background(
+                        id.clone(),
+                        local_addr,
+                        server_addr.clone(),
+                        exit.clone(),
+                    )
+                    .await
+                    {
+                        Ok(broken) => {
+                            log::debug!("connect server success");
+                            break broken;
+                        }
+                        Err(err) => {
+                            log::debug!("connect server fail, retry later. {}", err)
+                        }
+                    };
+
+                    select! {
+                        _ = exit.notified() => return,
+                        _ = sleep(Duration::from_secs(120)) =>{},
+                    };
+                };
+            }
+        });
 
         self.listener = Some(listener);
 
