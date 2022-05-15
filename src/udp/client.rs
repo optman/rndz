@@ -15,6 +15,25 @@ use std::sync::{
 use std::thread::spawn;
 use std::time::{Duration, Instant};
 
+/// Udp socket builder
+///
+///
+/// # example
+/// ```no_run
+/// use rndz::udp::Client;
+///
+/// let c1 = Client::new(rndz_server_addr, "c1", None)?;
+/// c1.listen()?;
+/// c1.as_socket().recv_from(...)?;
+/// ```
+///
+/// ```no_run
+/// use rndz::udp::Client;
+///
+/// let c2 = Client::new(rndz_server_addr, "c2", None)?;
+/// c2.connect("c1")?;
+/// c2.as_socket().send(b"hello")?;
+/// ```
 pub struct Client {
     svr_sk: Option<Socket>,
     server_addr: SocketAddr,
@@ -33,6 +52,8 @@ impl Drop for Client {
 }
 
 impl Client {
+    /// set rendezvous server, peer identity, local bind address.
+    /// if no local address set, choose according server address type(ipv4 or ipv6).
     pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
         let svr_sk = Self::connect_server(server_addr, local_addr)?;
 
@@ -56,14 +77,17 @@ impl Client {
         })
     }
 
+    /// expose udp socket
     pub fn as_socket(&self) -> UdpSocket {
         self.peer_sk.try_clone().unwrap().into()
     }
 
+    /// local address
     pub fn local_addr(&self) -> Option<SocketAddr> {
         Some(self.local_addr)
     }
 
+    /// peer address (connect mode)
     pub fn peer_addr(&self) -> Option<SocketAddr> {
         self.peer_addr
     }
@@ -123,6 +147,10 @@ impl Client {
         Ok(resp)
     }
 
+    /// send rendezvous server a request to connect target peer.
+    ///
+    /// create a connected udp socket with peer stored in peer_sk field, use as_socket() to get it.
+    ///
     pub fn connect(&mut self, target_id: &str) -> Result<()> {
         if self.svr_sk.is_none() {
             //This is a reconnect
@@ -189,6 +217,10 @@ impl Client {
         self.peer_sk.connect(&self.peer_addr.unwrap().into())
     }
 
+    /// keep ping rendezvous server, wait for peer connection request.
+    ///
+    /// when received `Fsync` request from server, attempt to send remote peer a packet
+    /// this will open the firwall and nat rule for the peer.
     pub fn listen(&mut self) -> Result<()> {
         #[cfg(windows)]
         log::warn!("WARNING: listen not works on WINDOWS!!!");

@@ -1,3 +1,9 @@
+//! TCP connection.
+//!
+//! use `Client` or `AsyncClient` to bind, listen, accept, connect socket.   
+//!
+//! use `Server` to create a rendezvous server.
+
 #[cfg(feature = "server")]
 mod server;
 #[cfg(feature = "server")]

@@ -20,6 +20,9 @@ use tokio::{
     time::timeout,
 };
 
+/// Tcp rendezvous server
+///
+/// keep traces of all peers, and forward connection request.
 pub struct Server {
     listener: TcpListener,
     peers: PeerMap,

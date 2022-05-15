@@ -17,6 +17,30 @@ struct Signal {
     broken: bool,
 }
 
+/// Tcp connection builder
+///
+/// Bind to a port, connect to a rendezvous server. Wait for peer connection request or initiate a
+/// peer connection request.
+///
+/// # example
+///
+/// ```no_run
+/// use rndz::tcp::Client;
+///
+/// let c1 = Client::new(rndz_server_addr, "c1", None)?;
+/// c1.listen()?;
+/// while let Ok(stream) = c1.accept()?{
+/// //...
+/// }
+/// ```
+///
+/// client2
+/// ```no_run
+/// use rndz::tcp::Client;
+/// let c2 = Client::new(rndz_server_addr, "c2", None)?;
+/// let stream = c.connect("c1")?;
+/// ```
+///
 pub struct Client {
     server_addr: String,
     id: String,
@@ -32,6 +56,8 @@ impl Drop for Client {
 }
 
 impl Client {
+    /// set rendezvous server, peer identity, local bind address.
+    /// if no local address set, choose according server address type(ipv4 or ipv6).
     pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
         Ok(Self {
             server_addr: server_addr.to_owned(),
@@ -42,6 +68,7 @@ impl Client {
         })
     }
 
+    /// expose TcpListener
     pub fn as_socket(&self) -> Option<TcpListener> {
         self.listener
             .as_ref()
@@ -92,6 +119,12 @@ impl Client {
         Ok(s)
     }
 
+    /// connect to rendezvous server and request a connection to target node.
+    ///
+    /// it will return a TcpStream with remote peer.
+    ///
+    /// the connection with rendezvous server will be drop after return.
+    ///
     pub fn connect(&mut self, target_id: &str) -> Result<TcpStream> {
         let mut svr = Self::connect_server(self.choose_bind_addr()?, &self.server_addr)?;
 
@@ -252,6 +285,12 @@ impl Client {
         return Ok(());
     }
 
+    /// put socket in listen mode, create connection with rendezvous server, wait for peer
+    /// connection request. if connection with server broken it will auto reconnect.
+    ///
+    /// when received `Fsync` request from server, attempt to connect remote peer with a very short timeout,
+    /// this will open the firwall and nat rule for the peer connection that will follow immediately.
+    /// When the peer connection finally come, the listening socket then accept it as normal.
     pub fn listen(&mut self) -> Result<()> {
         let listener = Self::bind(self.choose_bind_addr()?)?;
         listener.listen(10)?;
@@ -320,6 +359,7 @@ impl Client {
         Ok(())
     }
 
+    /// accept remote peer connection
     pub fn accept(&mut self) -> Result<(TcpStream, SocketAddr)> {
         self.listener
             .as_ref()
@@ -328,6 +368,7 @@ impl Client {
             .map(|(s, a)| (s.into(), a.as_socket().unwrap()))
     }
 
+    /// stop internal listen thread.
     pub fn shutdown(&mut self) -> Result<()> {
         let _ = self.listener.take().map(|l| l.shutdown(Both));
 

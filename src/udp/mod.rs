@@ -1,3 +1,9 @@
+//! UDP connection.
+//!
+//! use `Client` to bind, connect socket.
+//!
+//! use `Server` to create a rendezvous server.
+
 #[cfg(feature = "client")]
 mod client;
 #[cfg(feature = "client")]

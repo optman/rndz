@@ -22,6 +22,11 @@ use tokio::{
     time::{sleep, timeout},
 };
 
+/// Async tcp connection builder
+///
+/// async version of [`crate::tcp::Client`],
+/// require tokio async runtime
+///
 pub struct Client {
     server_addr: String,
     id: String,
@@ -37,6 +42,8 @@ impl Drop for Client {
 }
 
 impl Client {
+    /// set rendezvous server, peer identity, local bind address.
+    /// if no local address set, choose according server address type(ipv4 or ipv6).
     pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
         Ok(Self {
             server_addr: server_addr.to_owned(),
@@ -47,6 +54,7 @@ impl Client {
         })
     }
 
+    /// expose TcpListener
     pub fn as_socket(&self) -> Option<&TcpListener> {
         self.listener.as_ref()
     }
@@ -92,6 +100,12 @@ impl Client {
         Ok(s)
     }
 
+    /// connect to rendezvous server and request a connection to target node.
+    ///
+    /// it will return a TcpStream with remote peer.
+    ///
+    /// the connection with rendezvous server will be drop after return.
+    ///
     pub async fn connect(&mut self, target_id: &str) -> Result<TcpStream> {
         let svr = Self::connect_server(self.choose_bind_addr().await?, &self.server_addr).await?;
         let local_addr = svr.local_addr().unwrap();
@@ -258,6 +272,12 @@ impl Client {
         Ok(broken)
     }
 
+    /// put socket in listen mode, create connection with rendezvous server, wait for peer
+    /// connection request. if connection with server broken it will auto reconnect.
+    ///
+    /// when received `Fsync` request from server, attempt to connect remote peer with a very short timeout,
+    /// this will open the firwall and nat rule for the peer connection that will follow immediately.
+    /// When the peer connection finally come, the listening socket then accept it as normal.
     pub async fn listen(&mut self) -> Result<()> {
         let listener = Self::bind(self.choose_bind_addr().await?)?;
         let local_addr = listener.local_addr().unwrap();
@@ -310,6 +330,7 @@ impl Client {
         Ok(())
     }
 
+    /// accept remote peer connection
     pub async fn accept(&mut self) -> Result<(TcpStream, SocketAddr)> {
         select! {
             _ = self.exit.notified() => Err(Error::new(Other, "exit")),

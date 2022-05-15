@@ -25,6 +25,9 @@ impl Default for Client {
     }
 }
 
+/// Udp rendezvous server
+///
+/// keep traces of all peers, and forward connection request.
 pub struct Server {
     socket: UdpSocket,
     clients: HashMap<String, Client>,

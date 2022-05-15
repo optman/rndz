@@ -4,8 +4,6 @@ A simple rendezvous protocol implementation to help NAT traversal or hole punchi
 
 The idea is simple, a rendezvous server to observe peers address and forward connection request. When seen both peers sent each other packet, the NAT device or firewall rule then allow the traffic through.
 
-Under the hook, We create two socket bind to the SAME port number, one communicate the rendezvous server, the other communicate the remote peer. For tcp, the OS should allow listen socket and client socket with same port number coexist. For udp, the OS should correctly dispatch traffic to connected and unconnected udp with same port number respectfully.
-
 ### tcp listen/connect 
 
 client1
