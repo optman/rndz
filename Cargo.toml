@@ -3,6 +3,7 @@ name = "rndz"
 version = "0.1.2"
 edition = "2021"
 description = "A simple rendezvous protocol implementation to help NAT traversal or hole punching."
+repository = "https://github.com/optman/rndz"
 license = "MIT"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -14,15 +15,15 @@ license = "MIT"
 protobuf-codegen-pure = "2" 
 
 [features]
-default = ["client", "server", "async"]
+default = ["client", "server", "async", "env_logger", "structopt"]
 server = ["tokio"]
 async = ["tokio"]
 client = []
 
 [dependencies]
-log="*"
-env_logger="*"
-structopt="*"
-protobuf="*"
-socket2={version="*", features=["all"]}
-tokio={version="1", features=["full"], optional= true}
+log={version="0.4"}
+env_logger={version="0.9", optional=true}
+structopt={version="0.3", optional=true}
+protobuf="2.27"
+socket2={version="0.4", features=["all"]}
+tokio={version="1", features=["full"], optional=true}
