@@ -8,6 +8,7 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Result};
 use std::mem::MaybeUninit;
 use std::net::{Shutdown::Both, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::ops::Deref;
 use std::sync::{
     atomic::{AtomicBool, Ordering::Relaxed},
     Arc,
@@ -48,6 +49,19 @@ impl Drop for Client {
     fn drop(&mut self) {
         self.exit.store(true, Relaxed);
         self.drop_server_sk();
+    }
+}
+
+impl Deref for Client {
+    type Target = Socket;
+    fn deref(&self) -> &Socket {
+        &self.peer_sk
+    }
+}
+
+impl AsRef<Socket> for Client {
+    fn as_ref(&self) -> &Socket {
+        &self.peer_sk
     }
 }
 
@@ -140,9 +154,9 @@ impl Client {
     }
 
     fn recv_resp(&mut self) -> Result<Response> {
-        let mut buf = unsafe { MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init() };
+        let mut buf = unsafe { MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init() }; //MaybeUninit::uninit_array
         let n = self.svr_sk.as_ref().unwrap().recv(&mut buf)?;
-        let buf = unsafe { (&buf as *const _ as *const [u8; 1500]).read() };
+        let buf = unsafe { &*(&buf as *const _ as *const [u8; 1500]) }; //MaybeUninit::slice_assume_init_ref
         let resp = Response::parse_from_bytes(&buf[..n])?;
         Ok(resp)
     }
@@ -252,13 +266,13 @@ impl Client {
                 }
 
                 let mut buf =
-                    unsafe { MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init() };
+                    unsafe { MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init() }; //MaybeUninit::uninit_array
                 let n = match svr_sk.recv(&mut buf) {
                     Ok(n) => n,
                     Err(_) => continue,
                 };
 
-                let buf = unsafe { (&buf as *const _ as *const [u8; 1500]).read() };
+                let buf = unsafe { &*(&buf as *const _ as *const [u8; 1500]) }; //MaybeUninit::slice_assume_init_ref
 
                 let resp = match Response::parse_from_bytes(&buf[..n]) {
                     Ok(resp) => resp,

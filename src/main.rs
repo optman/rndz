@@ -70,14 +70,14 @@ async fn run_client(opt: ClientOpt) -> Result<()> {
                 c.connect(&peer)?;
                 let peer_addr = c.peer_addr().unwrap();
                 c.as_socket().send_to(b"hello", peer_addr)?;
-                let mut buf = [0u8; 1500];
+                let mut buf = [0; 1500];
                 let (n, addr) = c.as_socket().recv_from(&mut buf)?;
                 log::debug!("receive {} bytes from {}", n, addr.to_string());
             }
             None => {
                 c.listen()?;
 
-                let mut buf = [0u8; 1500];
+                let mut buf = [0; 1500];
                 while let Ok((n, addr)) = c.as_socket().recv_from(&mut buf) {
                     log::debug!("receive {} bytes from {}", n, addr.to_string());
                     let _ = c.as_socket().send_to(&buf[..n], addr);
@@ -92,7 +92,7 @@ async fn run_client(opt: ClientOpt) -> Result<()> {
                 let mut stream = c.connect(&peer).await?;
                 log::debug!("connect success");
                 let _ = stream.write_all(b"hello").await;
-                let mut buf = [0u8; 5];
+                let mut buf = [0; 5];
                 let n = stream.read(&mut buf).await.unwrap();
                 log::debug!("read {} bytes", n);
             }
@@ -101,7 +101,7 @@ async fn run_client(opt: ClientOpt) -> Result<()> {
                 while let Ok((mut stream, addr)) = c.accept().await {
                     log::debug!("accept {}", addr.to_string());
                     task::spawn(async move {
-                        let mut buf = [0u8; 5];
+                        let mut buf = [0; 5];
                         let n = stream.read(&mut buf).await.unwrap();
                         log::debug!("read {} bytes", n);
                         let _ = stream.write_all(b"hello").await;

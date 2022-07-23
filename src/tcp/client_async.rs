@@ -149,7 +149,7 @@ impl Client {
     }
 
     async fn read_resp(r: &mut OwnedReadHalf) -> Result<Response> {
-        let mut buf = [0u8; 2];
+        let mut buf = [0; 2];
         r.read_exact(&mut buf).await?;
         let mut buf = vec![0; u16::from_be_bytes(buf).into()];
         r.read_exact(&mut buf).await?;

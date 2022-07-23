@@ -7,12 +7,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let server_addr = "127.0.0.1:8888";
 
     {
-        let server_addr = server_addr.clone();
         thread::spawn(move || Server::new(server_addr).unwrap().run().unwrap());
     }
 
     let t = {
-        let server_addr = server_addr.clone();
         thread::spawn(move || {
             let mut c = Client::new(server_addr, "c1", None).unwrap();
             c.listen().unwrap();

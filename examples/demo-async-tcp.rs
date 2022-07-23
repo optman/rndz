@@ -13,12 +13,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let server_addr = "127.0.0.1:8888";
 
     {
-        let server_addr = server_addr.clone();
         spawn(async move { Server::new(server_addr).await?.run().await });
     }
 
     let t = {
-        let server_addr = server_addr.clone();
         spawn(async move {
             let mut c = AsyncClient::new(server_addr, "c1", None).unwrap();
             loop {
@@ -45,7 +43,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let mut buf = [0u8; 5];
+    let mut buf = [0; 5];
     s.read(&mut buf).await?;
 
     t.await?;

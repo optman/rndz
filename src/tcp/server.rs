@@ -147,14 +147,14 @@ impl<'a> PeerHandler<'a> {
     }
 
     async fn read_req(stream: &mut ReadHalf<'a>) -> Result<Request> {
-        let mut buf = [0u8; 2];
+        let mut buf = [0; 2];
         stream.read_exact(&mut buf).await?;
 
         let size = u16::from_be_bytes(buf).into();
         if size > 1500 {
             Err(Error::new(Other, "invalid message"))?;
         }
-        let mut buf = vec![0u8; size];
+        let mut buf = vec![0; size];
         stream.read_exact(&mut buf).await?;
 
         Request::parse_from_bytes(&mut buf).map_err(|_| Error::new(Other, "invalid message"))

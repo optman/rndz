@@ -9,12 +9,10 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     {
-        let server_addr = server_addr.clone();
         rt.spawn(async move { Server::new(server_addr).await.unwrap().run().await });
     }
 
     let t = thread::spawn(move || {
-        let server_addr = server_addr.clone();
         let mut c = Client::new(server_addr, "c1", None).unwrap();
         loop {
             match c.listen() {
@@ -39,7 +37,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     };
 
-    let mut buf = [0u8; 5];
+    let mut buf = [0; 5];
     s.read(&mut buf)?;
 
     t.join().unwrap();
