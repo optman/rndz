@@ -27,9 +27,9 @@ struct Signal {
 /// ```no_run
 /// use rndz::tcp::Client;
 ///
-/// let c1 = Client::new(rndz_server_addr, "c1", None)?;
-/// c1.listen()?;
-/// while let Ok(stream) = c1.accept()?{
+/// let mut c1 = Client::new("rndz_server:1234", "c1", None).unwrap();
+/// c1.listen().unwrap();
+/// while let Ok((stream, addr)) = c1.accept(){
 /// //...
 /// }
 /// ```
@@ -37,8 +37,8 @@ struct Signal {
 /// client2
 /// ```no_run
 /// use rndz::tcp::Client;
-/// let c2 = Client::new(rndz_server_addr, "c2", None)?;
-/// let stream = c.connect("c1")?;
+/// let mut c2 = Client::new("rndz_server:1234", "c2", None).unwrap();
+/// let stream = c2.connect("c1").unwrap();
 /// ```
 ///
 pub struct Client {

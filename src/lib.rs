@@ -26,7 +26,7 @@
 //!For convenient, the crate include both client and server code by default.
 //!Mostly you only use client or server code, set features to `client` or `server` instead.
 //!
-//!```
+//!```toml
 //!rndz = { version = "0.1", default-features=false, features=["client"]}
 //!```
 //!

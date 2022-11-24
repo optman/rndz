@@ -23,17 +23,18 @@ use std::time::{Duration, Instant};
 /// ```no_run
 /// use rndz::udp::Client;
 ///
-/// let c1 = Client::new(rndz_server_addr, "c1", None)?;
-/// c1.listen()?;
-/// c1.as_socket().recv_from(...)?;
+/// let mut c1 = Client::new("rndz_server:1234", "c1", None).unwrap();
+/// c1.listen().unwrap();
+/// let mut buf = [0u8, 10];
+/// c1.as_socket().recv_from(&mut buf).unwrap();
 /// ```
 ///
 /// ```no_run
 /// use rndz::udp::Client;
 ///
-/// let c2 = Client::new(rndz_server_addr, "c2", None)?;
-/// c2.connect("c1")?;
-/// c2.as_socket().send(b"hello")?;
+/// let mut c2 = Client::new("rndz_server:1234", "c2", None).unwrap();
+/// c2.connect("c1").unwrap();
+/// c2.as_socket().send(b"hello").unwrap();
 /// ```
 pub struct Client {
     svr_sk: Option<Socket>,
