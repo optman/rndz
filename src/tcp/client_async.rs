@@ -48,7 +48,7 @@ impl Client {
         Ok(Self {
             server_addr: server_addr.to_owned(),
             id: id.into(),
-            local_addr: local_addr,
+            local_addr,
             listener: None,
             exit: Default::default(),
         })
@@ -67,7 +67,7 @@ impl Client {
         let server_addr = lookup_host(self.server_addr.clone())
             .await?
             .next()
-            .ok_or(Error::new(Other, "server name resolve fail"))?;
+            .ok_or_else(|| Error::new(Other, "server name resolve fail"))?;
 
         let local_addr = match server_addr {
             SocketAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
@@ -78,11 +78,11 @@ impl Client {
     }
 
     async fn connect_server(local_addr: SocketAddr, server_addr: &str) -> Result<TcpStream> {
-        let svr = Self::bind(local_addr.into())?;
+        let svr = Self::bind(local_addr)?;
         let server_addr = lookup_host(server_addr)
             .await?
             .next()
-            .ok_or(Error::new(Other, "server name resolve fail"))?;
+            .ok_or_else(|| Error::new(Other, "server name resolve fail"))?;
         svr.connect(server_addr).await
     }
 
@@ -169,7 +169,7 @@ impl Client {
                         .parse()
                         .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
 
-                    if let Ok(s) = Self::bind(local_addr.into()) {
+                    if let Ok(s) = Self::bind(local_addr) {
                         log::debug!("connect {} -> {}", local_addr, dst_addr);
                         let _ = timeout(Duration::from_micros(1), s.connect(dst_addr)).await;
                     }
@@ -337,7 +337,7 @@ impl Client {
 
             r  = self.listener
                     .as_ref()
-                    .ok_or(Error::new(Other, "not listening"))?
+                    .ok_or_else(||Error::new(Other, "not listening"))?
                     .accept() => r,
         }
     }

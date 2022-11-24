@@ -1,4 +1,3 @@
-use log;
 use std::io::Result;
 use std::net::SocketAddr;
 use structopt::StructOpt;

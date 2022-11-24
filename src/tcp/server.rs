@@ -34,7 +34,7 @@ impl Server {
         let listener = TcpListener::bind(listen_addr).await?;
 
         Ok(Self {
-            listener: listener,
+            listener,
             peers: Default::default(),
             count: 0,
         })
@@ -55,11 +55,11 @@ impl Server {
                 let (r, w) = stream.split();
                 let h = PeerHandler {
                     stream: w,
-                    peers: peers,
+                    peers,
                     peer_id: "".to_string(),
                     req_rx: rx,
                     req_tx: tx,
-                    id: id,
+                    id,
                 };
 
                 h.handle_stream(r).await;
@@ -104,7 +104,7 @@ impl<'a> PeerHandler<'a> {
             }
         }
 
-        if self.peer_id != "" {
+        if !self.peer_id.is_empty() {
             log::debug!("peer {} disconnect", self.peer_id);
         }
     }
@@ -157,7 +157,7 @@ impl<'a> PeerHandler<'a> {
         let mut buf = vec![0; size];
         stream.read_exact(&mut buf).await?;
 
-        Request::parse_from_bytes(&mut buf).map_err(|_| Error::new(Other, "invalid message"))
+        Request::parse_from_bytes(&buf).map_err(|_| Error::new(Other, "invalid message"))
     }
 
     async fn send_response(&mut self, cmd: RespCmd) -> Result<()> {

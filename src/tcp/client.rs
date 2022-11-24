@@ -62,7 +62,7 @@ impl Client {
         Ok(Self {
             server_addr: server_addr.to_owned(),
             id: id.into(),
-            local_addr: local_addr,
+            local_addr,
             listener: None,
             signal: Default::default(),
         })
@@ -84,7 +84,7 @@ impl Client {
             .server_addr
             .to_socket_addrs()?
             .next()
-            .ok_or(Error::new(Other, "server name resolve fail"))?;
+            .ok_or_else(|| Error::new(Other, "server name resolve fail"))?;
 
         let local_addr = match server_addr {
             SocketAddr::V4(_) => "0.0.0.0:0".parse().unwrap(),
@@ -95,11 +95,11 @@ impl Client {
     }
 
     fn connect_server(local_addr: SocketAddr, server_addr: &str) -> Result<socket2::Socket> {
-        let svr = Self::bind(local_addr.into())?;
+        let svr = Self::bind(local_addr)?;
         let server_addr = server_addr
             .to_socket_addrs()?
             .next()
-            .ok_or(Error::new(Other, "server name resolve fail"))?;
+            .ok_or_else(|| Error::new(Other, "server name resolve fail"))?;
         svr.connect(&server_addr.into())?;
         Ok(svr)
     }
@@ -194,35 +194,32 @@ impl Client {
     }
 
     fn read_loop(local_addr: SocketAddr, r: &mut dyn Read, tx: SyncSender<ReqCmd>) -> Result<()> {
-        loop {
-            let req = match Self::read_resp(r) {
-                Ok(resp) => match resp.cmd {
-                    Some(RespCmd::Pong(_)) => None,
-                    Some(RespCmd::Fsync(fsync)) => {
-                        log::debug!("fsync {}", fsync.get_id());
+        while let Ok(resp) = Self::read_resp(r) {
+            let req = match resp.cmd {
+                Some(RespCmd::Pong(_)) => None,
+                Some(RespCmd::Fsync(fsync)) => {
+                    log::debug!("fsync {}", fsync.get_id());
 
-                        let dst_addr: SocketAddr = fsync
-                            .get_addr()
-                            .parse()
-                            .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
+                    let dst_addr: SocketAddr = fsync
+                        .get_addr()
+                        .parse()
+                        .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
 
-                        log::debug!("connect {} -> {}", local_addr, dst_addr);
+                    log::debug!("connect {} -> {}", local_addr, dst_addr);
 
-                        let _ = Self::bind(local_addr.into())
-                            .map(|s| s.connect_timeout(&dst_addr.into(), Duration::from_micros(1)));
+                    let _ = Self::bind(local_addr)
+                        .map(|s| s.connect_timeout(&dst_addr.into(), Duration::from_micros(1)));
 
-                        let mut rsync = Rsync::new();
-                        rsync.set_id(fsync.get_id().to_string());
-                        Some(ReqCmd::Rsync(rsync))
-                    }
-                    _ => None,
-                },
-                _ => break,
+                    let mut rsync = Rsync::new();
+                    rsync.set_id(fsync.get_id().to_string());
+                    Some(ReqCmd::Rsync(rsync))
+                }
+                _ => None,
             };
 
             if let Some(req) = req {
                 tx.send(req).unwrap();
-            }
+            };
         }
 
         Ok(())
@@ -248,7 +245,6 @@ impl Client {
         });
 
         hs.push({
-            let local_addr = local_addr.clone();
             let mut r = svr_sk.try_clone()?;
             spawn(move || Self::read_loop(local_addr, &mut r, tx).unwrap())
         });
@@ -267,7 +263,6 @@ impl Client {
         }
 
         {
-            let signal = signal.clone();
             spawn(move || {
                 let (lock, cvar) = &*signal;
                 let mut signal = lock.lock().unwrap();
@@ -282,7 +277,7 @@ impl Client {
             });
         }
 
-        return Ok(());
+        Ok(())
     }
 
     /// put socket in listen mode, create connection with rendezvous server, wait for peer
@@ -299,12 +294,7 @@ impl Client {
         let local_addr = listener.local_addr().unwrap().as_socket().unwrap();
         let server_addr = self.server_addr.clone();
         let signal = self.signal.clone();
-        Self::start_background(
-            id.clone(),
-            local_addr.clone(),
-            server_addr.clone(),
-            signal.clone(),
-        )?;
+        Self::start_background(id.clone(), local_addr, server_addr.clone(), signal.clone())?;
 
         spawn(move || loop {
             {
@@ -318,7 +308,7 @@ impl Client {
                     return;
                 }
 
-                assert_eq!((*signal).broken, true);
+                assert!((*signal).broken);
 
                 (*signal).broken = false;
             }
@@ -363,7 +353,7 @@ impl Client {
     pub fn accept(&mut self) -> Result<(TcpStream, SocketAddr)> {
         self.listener
             .as_ref()
-            .ok_or(Error::new(Other, "not listening"))?
+            .ok_or_else(|| Error::new(Other, "not listening"))?
             .accept()
             .map(|(s, a)| (s.into(), a.as_socket().unwrap()))
     }

@@ -84,8 +84,8 @@ impl Client {
             server_addr: svr_sk.peer_addr().unwrap().as_socket().unwrap(),
             svr_sk: Some(svr_sk),
             id: id.into(),
-            peer_sk: peer_sk,
-            local_addr: local_addr,
+            peer_sk,
+            local_addr,
             peer_addr: None,
             exit: Default::default(),
         })
@@ -110,7 +110,7 @@ impl Client {
         let server_addr = server_addr
             .to_socket_addrs()?
             .next()
-            .ok_or(Error::new(Other, "no addr"))?;
+            .ok_or_else(|| Error::new(Other, "no addr"))?;
 
         let local_addr = match local_addr {
             Some(addr) => addr,
@@ -133,10 +133,10 @@ impl Client {
     }
 
     fn drop_server_sk(&mut self) {
-        self.svr_sk.take().map(|mut s| {
+        if let Some(mut s) = self.svr_sk.take() {
             Self::send_cmd(&mut s, &self.id, ReqCmd::Bye(Bye::new()), self.server_addr);
             s.shutdown(Both).unwrap();
-        });
+        };
     }
 
     fn create_socket(domain: Domain) -> Result<Socket> {
@@ -196,30 +196,25 @@ impl Client {
         for _ in 0..3 {
             self.svr_sk.as_ref().unwrap().send(isync.as_ref())?;
 
-            match self.recv_resp() {
-                Ok(resp) => {
-                    if resp.get_id() != self.id {
-                        continue;
-                    }
-                    match resp.cmd {
-                        Some(RespCmd::Redirect(rdr)) => {
-                            if rdr.addr != "" {
-                                peer_addr = Some(rdr.addr);
-                                break;
-                            } else {
-                                return Err(Error::new(Other, "target not found"));
-                            }
-                        }
-                        _ => {}
+            if let Ok(resp) = self.recv_resp() {
+                if resp.get_id() != self.id {
+                    continue;
+                }
+
+                if let Some(RespCmd::Redirect(rdr)) = resp.cmd {
+                    if !rdr.addr.is_empty() {
+                        peer_addr = Some(rdr.addr);
+                        break;
+                    } else {
+                        return Err(Error::new(Other, "target not found"));
                     }
                 }
-                Err(_) => {}
             }
         }
 
         self.peer_addr = Some(
             peer_addr
-                .ok_or(Error::new(Other, "no response"))?
+                .ok_or_else(|| Error::new(Other, "no response"))?
                 .parse()
                 .map_err(|_| Error::new(Other, "rndz server response invalid peer address"))?,
         );
@@ -241,7 +236,7 @@ impl Client {
 
         let mut svr_sk = self.svr_sk.as_ref().unwrap().try_clone().unwrap();
         let myid = self.id.clone();
-        let server_addr = self.server_addr.clone();
+        let server_addr = self.server_addr;
 
         let exit = self.exit.clone();
 

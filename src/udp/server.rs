@@ -39,7 +39,7 @@ impl Server {
         let socket = UdpSocket::bind(listen_addr)?;
 
         Ok(Self {
-            socket: socket,
+            socket,
             clients: Default::default(),
             next_gc: Self::next_gc(),
         })
@@ -91,7 +91,7 @@ impl Server {
         let mut c = self
             .clients
             .entry(id.clone())
-            .or_insert_with(|| Client::default());
+            .or_insert_with(Client::default);
         c.last_ping = Instant::now();
         c.addr = addr;
 
@@ -102,8 +102,11 @@ impl Server {
         let target_id = isync.get_id();
         log::debug!("isync {} -> {}", id, target_id);
 
-        if let Some(t) = self.clients.get(target_id).map(|t| *t) {
-            let mut s = self.clients.entry(id.clone()).or_insert(Client::default());
+        if let Some(t) = self.clients.get(target_id).copied() {
+            let mut s = self
+                .clients
+                .entry(id.clone())
+                .or_insert_with(Client::default);
             s.last_ping = Instant::now();
             s.addr = addr;
 
@@ -115,7 +118,7 @@ impl Server {
             log::debug!("target id {} not found", target_id);
             let mut rdr = Redirect::new();
             rdr.set_id(target_id.to_string());
-            self.send_response(RespCmd::Redirect(rdr), id.clone(), addr);
+            self.send_response(RespCmd::Redirect(rdr), id, addr);
         }
     }
 
@@ -123,9 +126,9 @@ impl Server {
         let target_id = rsync.get_id();
         log::debug!("rsync {} -> {}", id, target_id);
 
-        if let Some(c) = self.clients.get(target_id).map(|c| *c) {
+        if let Some(c) = self.clients.get(target_id).copied() {
             let mut rdr = Redirect::new();
-            rdr.set_id(id.to_string());
+            rdr.set_id(id);
             rdr.set_addr(addr.to_string());
             self.send_response(RespCmd::Redirect(rdr), target_id.to_string(), c.addr);
         } else {
