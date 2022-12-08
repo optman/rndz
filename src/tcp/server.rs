@@ -166,11 +166,10 @@ impl<'a> PeerHandler<'a> {
 
         let vec = resp.write_to_bytes().unwrap();
 
-        let _ = self
-            .stream
+        self.stream
             .write_all(&(vec.len() as u16).to_be_bytes())
             .await?;
-        let _ = self.stream.write_all(&vec).await?;
+        self.stream.write_all(&vec).await?;
         Ok(())
     }
 

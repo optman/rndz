@@ -257,7 +257,7 @@ impl Client {
                 }
                 let (lock, cvar) = &*signal;
                 let mut signal = lock.lock().unwrap();
-                (*signal).broken = true;
+                signal.broken = true;
                 cvar.notify_all();
             });
         }
@@ -266,12 +266,12 @@ impl Client {
             spawn(move || {
                 let (lock, cvar) = &*signal;
                 let mut signal = lock.lock().unwrap();
-                if (*signal).exit {
+                if signal.exit {
                     let _ = svr_sk.shutdown(Both);
                     return;
                 }
                 signal = cvar.wait(signal).unwrap();
-                if (*signal).exit {
+                if signal.exit {
                     let _ = svr_sk.shutdown(Both);
                 }
             });
@@ -300,17 +300,17 @@ impl Client {
             {
                 let (lock, cvar) = &*signal;
                 let mut signal = lock.lock().unwrap();
-                if (*signal).exit {
+                if signal.exit {
                     return;
                 }
                 signal = cvar.wait(signal).unwrap();
-                if (*signal).exit {
+                if signal.exit {
                     return;
                 }
 
-                assert!((*signal).broken);
+                assert!(signal.broken);
 
-                (*signal).broken = false;
+                signal.broken = false;
             }
 
             log::debug!("connection with server is broken, try to reconnect.");
@@ -331,14 +331,14 @@ impl Client {
 
                 let (lock, cvar) = &*signal;
                 let mut signal = lock.lock().unwrap();
-                if (*signal).exit {
+                if signal.exit {
                     return;
                 }
                 signal = cvar
                     .wait_timeout(signal, Duration::from_secs(120))
                     .unwrap()
                     .0;
-                if (*signal).exit {
+                if signal.exit {
                     return;
                 }
             }
@@ -364,7 +364,7 @@ impl Client {
 
         let (lock, cvar) = &*self.signal;
         let mut signal = lock.lock().unwrap();
-        (*signal).exit = true;
+        signal.exit = true;
         cvar.notify_all();
 
         Ok(())
