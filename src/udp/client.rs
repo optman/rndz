@@ -7,7 +7,7 @@ use protobuf::Message;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Result};
 use std::mem::MaybeUninit;
-use std::net::{Shutdown::Both, SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::ops::Deref;
 use std::sync::{
     atomic::{AtomicBool, Ordering::Relaxed},
@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 /// let mut c1 = Client::new("rndz_server:1234", "c1", None).unwrap();
 /// c1.listen().unwrap();
 /// let mut buf = [0u8, 10];
-/// c1.as_socket().recv_from(&mut buf).unwrap();
+/// c1.as_socket().unwrap().recv_from(&mut buf).unwrap();
 /// ```
 ///
 /// ```no_run
@@ -34,13 +34,13 @@ use std::time::{Duration, Instant};
 ///
 /// let mut c2 = Client::new("rndz_server:1234", "c2", None).unwrap();
 /// c2.connect("c1").unwrap();
-/// c2.as_socket().send(b"hello").unwrap();
+/// c2.as_socket().unwrap().send(b"hello").unwrap();
 /// ```
 pub struct Client {
     svr_sk: Option<Socket>,
     server_addr: SocketAddr,
     id: String,
-    peer_sk: Socket,
+    peer_sk: Option<Socket>,
     local_addr: SocketAddr,
     peer_addr: Option<SocketAddr>,
     exit: Arc<AtomicBool>,
@@ -56,13 +56,13 @@ impl Drop for Client {
 impl Deref for Client {
     type Target = Socket;
     fn deref(&self) -> &Socket {
-        &self.peer_sk
+        self.as_ref()
     }
 }
 
 impl AsRef<Socket> for Client {
     fn as_ref(&self) -> &Socket {
-        &self.peer_sk
+        self.peer_sk.as_ref().expect("listen or connect first!")
     }
 }
 
@@ -71,21 +71,27 @@ impl Client {
     /// if no local address set, choose according server address type(ipv4 or ipv6).
     pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
         let svr_sk = Self::connect_server(server_addr, local_addr)?;
+        Self::_new(svr_sk, id)
+    }
 
+    /// svr_sk is used to connect with rndz server
+    pub fn new_with_socket(svr_addr: &str, id: &str, svr_sk: UdpSocket) -> Result<Self> {
+        svr_sk.connect(svr_addr)?;
+        let svr_sk: Socket = svr_sk.into();
+        svr_sk.set_nonblocking(false)?;
+        svr_sk.set_reuse_address(true)?;
+        Self::_new(svr_sk, id)
+    }
+
+    fn _new(svr_sk: Socket, id: &str) -> Result<Self> {
         let local_addr = svr_sk.local_addr().unwrap().as_socket().unwrap();
-        let domain = match local_addr {
-            SocketAddr::V4(_) => Domain::IPV4,
-            SocketAddr::V6(_) => Domain::IPV6,
-        };
-
-        let peer_sk = Self::create_socket(domain)?;
-        //DON'T bind now, for Windows can't works well with two same port sockets.
 
         Ok(Self {
             server_addr: svr_sk.peer_addr().unwrap().as_socket().unwrap(),
             svr_sk: Some(svr_sk),
             id: id.into(),
-            peer_sk,
+            //DON'T bind now, for Windows can't works well with two same port sockets.
+            peer_sk: None,
             local_addr,
             peer_addr: None,
             exit: Default::default(),
@@ -93,8 +99,11 @@ impl Client {
     }
 
     /// expose udp socket
-    pub fn as_socket(&self) -> UdpSocket {
-        self.peer_sk.try_clone().unwrap().into()
+    pub fn as_socket(&self) -> Option<UdpSocket> {
+        self.peer_sk
+            .as_ref()
+            .and_then(|s| s.try_clone().ok())
+            .map(Into::into)
     }
 
     /// local address
@@ -121,10 +130,7 @@ impl Client {
             },
         };
 
-        let domain = match local_addr {
-            SocketAddr::V4(_) => Domain::IPV4,
-            SocketAddr::V6(_) => Domain::IPV6,
-        };
+        let domain = Domain::for_address(local_addr);
 
         let svr_sk = Self::create_socket(domain)?;
         svr_sk.bind(&local_addr.into())?;
@@ -136,7 +142,6 @@ impl Client {
     fn drop_server_sk(&mut self) {
         if let Some(mut s) = self.svr_sk.take() {
             Self::send_cmd(&mut s, &self.id, ReqCmd::Bye(Bye::new()), self.server_addr);
-            s.shutdown(Both).unwrap();
         };
     }
 
@@ -223,8 +228,13 @@ impl Client {
         //we don't need svr_sk any more, to prevent interferce with peer_sk on WINDOWS, we drop it.
         self.drop_server_sk();
 
-        self.peer_sk.bind(&self.local_addr.into())?;
-        self.peer_sk.connect(&self.peer_addr.unwrap().into())
+        let domain = Domain::for_address(self.local_addr);
+        let peer_sk = Self::create_socket(domain)?;
+        peer_sk.bind(&self.local_addr.into())?;
+        peer_sk.connect(&self.peer_addr.unwrap().into())?;
+        self.peer_sk = Some(peer_sk);
+
+        Ok(())
     }
 
     /// keep ping rendezvous server, wait for peer connection request.
@@ -299,7 +309,11 @@ impl Client {
             }
         });
 
-        self.peer_sk.bind(&self.local_addr.into())
+        let domain = Domain::for_address(self.local_addr);
+        let peer_sk = Self::create_socket(domain)?;
+        peer_sk.bind(&self.local_addr.into())?;
+        self.peer_sk = Some(peer_sk);
+        Ok(())
     }
 
     fn send_rsync(socket: &mut Socket, myid: &str, target_id: &str, addr: SocketAddr) {

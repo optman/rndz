@@ -105,10 +105,7 @@ impl Client {
     }
 
     fn bind(local_addr: SocketAddr) -> Result<Socket> {
-        let domain = match local_addr {
-            SocketAddr::V4(_) => Domain::IPV4,
-            SocketAddr::V6(_) => Domain::IPV6,
-        };
+        let domain = Domain::for_address(local_addr);
 
         let s = Socket::new(domain, Type::STREAM, Some(Protocol::TCP)).unwrap();
         s.set_reuse_address(true)?;
