@@ -8,7 +8,6 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Result};
 use std::mem::MaybeUninit;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
-use std::ops::Deref;
 use std::sync::{
     atomic::{AtomicBool, Ordering::Relaxed},
     Arc,
@@ -24,25 +23,23 @@ use std::time::{Duration, Instant};
 /// use rndz::udp::Client;
 ///
 /// let mut c1 = Client::new("rndz_server:1234", "c1", None).unwrap();
-/// c1.listen().unwrap();
+/// let s = c1.listen().unwrap();
 /// let mut buf = [0u8, 10];
-/// c1.as_socket().unwrap().recv_from(&mut buf).unwrap();
+/// s.recv_from(&mut buf).unwrap();
 /// ```
 ///
 /// ```no_run
 /// use rndz::udp::Client;
 ///
 /// let mut c2 = Client::new("rndz_server:1234", "c2", None).unwrap();
-/// c2.connect("c1").unwrap();
-/// c2.as_socket().unwrap().send(b"hello").unwrap();
+/// let s= c2.connect("c1").unwrap();
+/// s.send(b"hello").unwrap();
 /// ```
 pub struct Client {
     svr_sk: Option<Socket>,
     server_addr: SocketAddr,
     id: String,
-    peer_sk: Option<Socket>,
     local_addr: SocketAddr,
-    peer_addr: Option<SocketAddr>,
     exit: Arc<AtomicBool>,
 }
 
@@ -50,19 +47,6 @@ impl Drop for Client {
     fn drop(&mut self) {
         self.exit.store(true, Relaxed);
         self.drop_server_sk();
-    }
-}
-
-impl Deref for Client {
-    type Target = Socket;
-    fn deref(&self) -> &Socket {
-        self.as_ref()
-    }
-}
-
-impl AsRef<Socket> for Client {
-    fn as_ref(&self) -> &Socket {
-        self.peer_sk.as_ref().expect("listen or connect first!")
     }
 }
 
@@ -90,30 +74,14 @@ impl Client {
             server_addr: svr_sk.peer_addr().unwrap().as_socket().unwrap(),
             svr_sk: Some(svr_sk),
             id: id.into(),
-            //DON'T bind now, for Windows can't works well with two same port sockets.
-            peer_sk: None,
             local_addr,
-            peer_addr: None,
             exit: Default::default(),
         })
-    }
-
-    /// expose udp socket
-    pub fn as_socket(&self) -> Option<UdpSocket> {
-        self.peer_sk
-            .as_ref()
-            .and_then(|s| s.try_clone().ok())
-            .map(Into::into)
     }
 
     /// local address
     pub fn local_addr(&self) -> Option<SocketAddr> {
         Some(self.local_addr)
-    }
-
-    /// peer address (connect mode)
-    pub fn peer_addr(&self) -> Option<SocketAddr> {
-        self.peer_addr
     }
 
     fn connect_server(server_addr: &str, local_addr: Option<SocketAddr>) -> Result<Socket> {
@@ -171,14 +139,16 @@ impl Client {
     ///
     /// create a connected udp socket with peer stored in peer_sk field, use as_socket() to get it.
     ///
-    pub fn connect(&mut self, target_id: &str) -> Result<()> {
+    pub fn connect(&mut self, target_id: &str) -> Result<UdpSocket> {
         if self.svr_sk.is_none() {
             //This is a reconnect
             self.svr_sk = Some(Self::connect_server(
                 &self.server_addr.to_string(),
                 Some(self.local_addr),
             )?);
+
             //From now on, there are two same port socket, WINDOWS will confuse!
+            //Windows can't works well with two same port sockets.
 
             //NOTE: DON'T reconnect on WINDOWS!!!!
             #[cfg(windows)]
@@ -218,12 +188,10 @@ impl Client {
             }
         }
 
-        self.peer_addr = Some(
-            peer_addr
-                .ok_or_else(|| Error::new(Other, "no response"))?
-                .parse()
-                .map_err(|_| Error::new(Other, "rndz server response invalid peer address"))?,
-        );
+        let peer_addr: SocketAddr = peer_addr
+            .ok_or_else(|| Error::new(Other, "no response"))?
+            .parse()
+            .map_err(|_| Error::new(Other, "rndz server response invalid peer address"))?;
 
         //we don't need svr_sk any more, to prevent interferce with peer_sk on WINDOWS, we drop it.
         self.drop_server_sk();
@@ -231,17 +199,16 @@ impl Client {
         let domain = Domain::for_address(self.local_addr);
         let peer_sk = Self::create_socket(domain)?;
         peer_sk.bind(&self.local_addr.into())?;
-        peer_sk.connect(&self.peer_addr.unwrap().into())?;
-        self.peer_sk = Some(peer_sk);
+        peer_sk.connect(&peer_addr.into())?;
 
-        Ok(())
+        Ok(peer_sk.into())
     }
 
     /// keep ping rendezvous server, wait for peer connection request.
     ///
     /// when received `Fsync` request from server, attempt to send remote peer a packet
     /// this will open the firwall and nat rule for the peer.
-    pub fn listen(&mut self) -> Result<()> {
+    pub fn listen(&mut self) -> Result<UdpSocket> {
         #[cfg(windows)]
         log::warn!("WARNING: listen not works on WINDOWS!!!");
 
@@ -312,8 +279,7 @@ impl Client {
         let domain = Domain::for_address(self.local_addr);
         let peer_sk = Self::create_socket(domain)?;
         peer_sk.bind(&self.local_addr.into())?;
-        self.peer_sk = Some(peer_sk);
-        Ok(())
+        Ok(peer_sk.into())
     }
 
     fn send_rsync(socket: &mut Socket, myid: &str, target_id: &str, addr: SocketAddr) {

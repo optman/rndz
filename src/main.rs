@@ -66,18 +66,14 @@ async fn run_client(opt: ClientOpt) -> Result<()> {
 
         match opt.remote_peer {
             Some(peer) => {
-                c.connect(&peer)?;
-                let peer_addr = c.peer_addr().unwrap();
-                let s = c.as_socket().unwrap();
-                s.send_to(b"hello", peer_addr)?;
+                let s = c.connect(&peer)?;
+                s.send(b"hello")?;
                 let mut buf = [0; 1500];
                 let (n, addr) = s.recv_from(&mut buf)?;
                 log::debug!("receive {} bytes from {}", n, addr.to_string());
             }
             None => {
-                c.listen()?;
-                let s = c.as_socket().unwrap();
-
+                let s = c.listen()?;
                 let mut buf = [0; 1500];
                 while let Ok((n, addr)) = s.recv_from(&mut buf) {
                     log::debug!("receive {} bytes from {}", n, addr.to_string());

@@ -13,9 +13,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let t = {
         thread::spawn(move || {
             let mut c = Client::new(server_addr, "c1", None).unwrap();
-            c.listen().unwrap();
+            let s = c.listen().unwrap();
             let mut buf = [0; 10];
-            let n = c.as_socket().unwrap().recv(&mut buf).unwrap();
+            let n = s.recv(&mut buf).unwrap();
             assert_eq!(&buf[..n], b"hello");
         })
     };
@@ -23,12 +23,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     loop {
         let mut c = Client::new(server_addr, "c2", None).unwrap();
         match c.connect("c1") {
-            Ok(()) => {
-                let remote_addr = c.peer_addr().unwrap();
-                c.as_socket()
-                    .unwrap()
-                    .send_to(b"hello", remote_addr)
-                    .unwrap();
+            Ok(s) => {
+                s.send(b"hello").unwrap();
                 break;
             }
             _ => thread::sleep(time::Duration::from_secs(2)),
