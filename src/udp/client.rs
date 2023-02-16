@@ -10,7 +10,7 @@ use std::mem::MaybeUninit;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::{
     atomic::{AtomicBool, Ordering::Relaxed},
-    Arc,
+    Arc, RwLock,
 };
 use std::thread::spawn;
 use std::time::{Duration, Instant};
@@ -41,7 +41,7 @@ pub struct Client {
     id: String,
     local_addr: SocketAddr,
     exit: Arc<AtomicBool>,
-    stale: Arc<AtomicBool>,
+    last_pong: Arc<RwLock<Option<Instant>>>,
 }
 
 impl Drop for Client {
@@ -77,7 +77,7 @@ impl Client {
             id: id.into(),
             local_addr,
             exit: Default::default(),
-            stale: Default::default(),
+            last_pong: Default::default(),
         })
     }
 
@@ -86,10 +86,9 @@ impl Client {
         Some(self.local_addr)
     }
 
-    /// stale
-    /// a fresh client is not stale, it become stale only when long time no pong recv since last pong.
-    pub fn is_stale(&self) -> bool {
-        self.stale.load(Relaxed)
+    /// last recv pong from server
+    pub fn last_pong(&self) -> Option<Instant> {
+        *self.last_pong.read().unwrap()
     }
 
     fn connect_server(server_addr: &str, local_addr: Option<SocketAddr>) -> Result<Socket> {
@@ -225,7 +224,7 @@ impl Client {
         let server_addr = self.server_addr;
 
         let exit = self.exit.clone();
-        let stale = self.stale.clone();
+        let last_pong = self.last_pong.clone();
 
         spawn(move || {
             let mut req = Self::new_req(&myid);
@@ -235,19 +234,11 @@ impl Client {
             let mut last_ping: Option<Instant> = None;
             let keepalive_to = Duration::from_secs(10);
 
-            let mut last_pong: Option<Instant> = None;
-            let broken_to = Duration::from_secs(60);
-
             svr_sk.set_read_timeout(Some(keepalive_to)).unwrap();
 
             loop {
                 if exit.load(Relaxed) {
                     break;
-                }
-
-                if last_pong.map(|l| l.elapsed() > broken_to).unwrap_or(false) {
-                    stale.store(true, Relaxed);
-                    last_pong = None;
                 }
 
                 if last_ping.is_none() || last_ping.as_ref().unwrap().elapsed() > keepalive_to {
@@ -275,10 +266,7 @@ impl Client {
 
                 match resp.cmd {
                     Some(RespCmd::Pong(_)) => {
-                        if last_pong.is_none() {
-                            stale.store(false, Relaxed);
-                        }
-                        last_pong = Some(Instant::now());
+                        *last_pong.write().unwrap() = Some(Instant::now());
                     }
                     Some(RespCmd::Fsync(fsync)) => {
                         log::debug!("fsync {}", fsync.get_id());
