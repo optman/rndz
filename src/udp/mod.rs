@@ -1,8 +1,8 @@
 //! UDP connection.
 //!
-//! use `Client` to bind, connect socket.
+//! Use `Client` to bind, connect socket.
 //!
-//! use `Server` to create a rendezvous server.
+//! Use `Server` to create a rendezvous server.
 
 #[cfg(feature = "client")]
 mod client;
@@ -18,6 +18,7 @@ pub use server::Server;
 mod tests {
     use socket2::{Domain, Protocol, Socket, Type};
     use std::net::SocketAddr;
+
     #[test]
     fn test_server() {
         let local_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();

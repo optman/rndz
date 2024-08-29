@@ -22,10 +22,10 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-/// Async tcp connection builder
+/// Async TCP connection builder.
 ///
-/// async version of [`crate::tcp::Client`],
-/// require tokio async runtime
+/// Async version of [`crate::tcp::Client`],
+/// requires Tokio async runtime.
 ///
 pub struct Client {
     server_addr: String,
@@ -42,8 +42,8 @@ impl Drop for Client {
 }
 
 impl Client {
-    /// set rendezvous server, peer identity, local bind address.
-    /// if no local address set, choose according server address type(ipv4 or ipv6).
+    /// Sets rendezvous server, peer identity, and local bind address.
+    /// If no local address is set, chooses according to server address type (IPv4 or IPv6).
     pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
         Ok(Self {
             server_addr: server_addr.to_owned(),
@@ -54,7 +54,7 @@ impl Client {
         })
     }
 
-    /// expose TcpListener
+    /// Exposes TcpListener.
     pub fn as_socket(&self) -> Option<&TcpListener> {
         self.listener.as_ref()
     }
@@ -100,12 +100,11 @@ impl Client {
         Ok(s)
     }
 
-    /// connect to rendezvous server and request a connection to target node.
+    /// Connect to rendezvous server and request a connection to the target node.
     ///
-    /// it will return a TcpStream with remote peer.
+    /// Returns a TcpStream with the remote peer.
     ///
-    /// the connection with rendezvous server will be drop after return.
-    ///
+    /// The connection with the rendezvous server will be dropped after return.
     pub async fn connect(&mut self, target_id: &str) -> Result<TcpStream> {
         let svr = Self::connect_server(self.choose_bind_addr().await?, &self.server_addr).await?;
         let local_addr = svr.local_addr().unwrap();
@@ -125,7 +124,7 @@ impl Client {
 
         let target_addr: SocketAddr = addr
             .parse()
-            .map_err(|_| Error::new(Other, "target id not found"))?;
+            .map_err(|_| Error::new(Other, "target ID not found"))?;
 
         let s = Self::bind(local_addr)?;
         s.connect(target_addr).await
@@ -134,7 +133,6 @@ impl Client {
     fn new_req(id: String) -> Request {
         let mut req = Request::new();
         req.set_id(id);
-
         req
     }
 
@@ -167,7 +165,7 @@ impl Client {
                     let dst_addr: SocketAddr = fsync
                         .get_addr()
                         .parse()
-                        .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
+                        .map_err(|_| Error::new(Other, "invalid fsync address"))?;
 
                     if let Ok(s) = Self::bind(local_addr) {
                         log::debug!("connect {} -> {}", local_addr, dst_addr);
@@ -193,7 +191,7 @@ impl Client {
         loop {
             let resp = select! {
                  _ = exit.notified() =>  break,
-                 req= Self::handle_resp(local_addr, &mut r) => req,
+                 req = Self::handle_resp(local_addr, &mut r) => req,
             };
 
             let ok = match resp {
@@ -242,7 +240,6 @@ impl Client {
         let (tx, rx) = channel(10);
 
         let broken: Arc<Notify> = Default::default();
-
         tx.send(ReqCmd::Ping(Ping::new())).await.unwrap();
 
         let rl = {
@@ -264,7 +261,6 @@ impl Client {
             let broken = broken.clone();
             spawn(async move {
                 let _ = join!(rl, wl);
-
                 broken.notify_waiters();
             });
         }
@@ -272,12 +268,12 @@ impl Client {
         Ok(broken)
     }
 
-    /// put socket in listen mode, create connection with rendezvous server, wait for peer
-    /// connection request. if connection with server broken it will auto reconnect.
+    /// Puts socket in listen mode, creates a connection with the rendezvous server, and waits for peer
+    /// connection request. If the connection with the server is broken, it will auto-reconnect.
     ///
-    /// when received `Fsync` request from server, attempt to connect remote peer with a very short timeout,
-    /// this will open the firwall and nat rule for the peer connection that will follow immediately.
-    /// When the peer connection finally come, the listening socket then accept it as normal.
+    /// When an `Fsync` request is received from the server, attempts to connect to the remote peer with a very short timeout,
+    /// this will open the firewall and NAT rule for the peer connection that will follow immediately.
+    /// When the peer connection finally comes, the listening socket then accepts it as normal.
     pub async fn listen(&mut self) -> Result<()> {
         let listener = Self::bind(self.choose_bind_addr().await?)?;
         let local_addr = listener.local_addr().unwrap();
@@ -286,9 +282,7 @@ impl Client {
         let id = self.id.clone();
         let server_addr = self.server_addr.clone();
         let exit = self.exit.clone();
-        let mut broken =
-            Self::start_background(id.clone(), local_addr, server_addr.clone(), exit.clone())
-                .await?;
+        let mut broken = Self::start_background(id.clone(), local_addr, server_addr.clone(), exit.clone()).await?;
 
         spawn(async move {
             loop {
@@ -297,7 +291,7 @@ impl Client {
                     _ = broken.notified() => {},
                 };
 
-                log::debug!("connection with server is broken, try to reconnect");
+                log::debug!("Connection with server is broken, trying to reconnect");
 
                 broken = loop {
                     match Self::start_background(
@@ -305,21 +299,19 @@ impl Client {
                         local_addr,
                         server_addr.clone(),
                         exit.clone(),
-                    )
-                    .await
-                    {
+                    ).await {
                         Ok(broken) => {
-                            log::debug!("connect server success");
+                            log::debug!("Connected to server successfully");
                             break broken;
                         }
                         Err(err) => {
-                            log::debug!("connect server fail, retry later. {}", err)
+                            log::debug!("Failed to connect to server, retrying later. {}", err)
                         }
                     };
 
                     select! {
                         _ = exit.notified() => return,
-                        _ = sleep(Duration::from_secs(120)) =>{},
+                        _ = sleep(Duration::from_secs(120)) => {},
                     };
                 };
             }
@@ -330,14 +322,13 @@ impl Client {
         Ok(())
     }
 
-    /// accept remote peer connection
+    /// Accepts remote peer connection.
     pub async fn accept(&mut self) -> Result<(TcpStream, SocketAddr)> {
         select! {
             _ = self.exit.notified() => Err(Error::new(Other, "exit")),
-
-            r  = self.listener
+            r = self.listener
                     .as_ref()
-                    .ok_or_else(||Error::new(Other, "not listening"))?
+                    .ok_or_else(|| Error::new(Other, "not listening"))?
                     .accept() => r,
         }
     }

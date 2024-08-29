@@ -70,6 +70,7 @@ impl Server {
     }
 }
 
+#[derive(Clone)]
 struct PeerState {
     id: u64,
     last_ping: Instant,
@@ -115,35 +116,32 @@ impl<'a> PeerHandler<'a> {
                 Ok(req) => req_tx
                     .send(req)
                     .await
-                    .map_err(|_| Error::new(Other, "mpsc closed?")),
+                    .map_err(|_| Error::new(Other, "mpsc channel closed")),
                 _ => {
                     let mut bye = Request::new();
                     bye.set_Bye(Bye::new());
-                    let _ = req_tx.send(bye);
+                    let _ = req_tx.send(bye).await;
 
-                    Err(Error::new(Other, "byte"))
+                    Err(Error::new(Other, "timeout reading request"))
                 }
             }?;
         }
     }
 
     async fn handle_cmds(&mut self) -> Result<()> {
-        loop {
-            match self.req_rx.recv().await {
-                Some(req) => {
-                    let src_id = req.get_id().to_string();
-                    match req.cmd {
-                        Some(ReqCmd::Ping(ping)) => self.handle_ping(src_id, ping).await,
-                        Some(ReqCmd::Isync(isync)) => self.handle_isync(src_id, isync).await,
-                        Some(ReqCmd::Fsync(fsync)) => self.handle_fsync(fsync).await,
-                        Some(ReqCmd::Rsync(rsync)) => self.handle_rsync(src_id, rsync).await,
-                        Some(ReqCmd::Bye(_)) => Err(Error::new(Other, "bye")),
-                        _ => Err(Error::new(Other, "uknown cmd")),
-                    }
-                }
-                _ => Err(Error::new(Other, "bye")),
-            }?;
+        while let Some(req) = self.req_rx.recv().await {
+            let src_id = req.get_id().to_string();
+            match req.cmd {
+                Some(ReqCmd::Ping(ping)) => self.handle_ping(src_id, ping).await?,
+                Some(ReqCmd::Isync(isync)) => self.handle_isync(src_id, isync).await?,
+                Some(ReqCmd::Fsync(fsync)) => self.handle_fsync(fsync).await?,
+                Some(ReqCmd::Rsync(rsync)) => self.handle_rsync(src_id, rsync).await?,
+                Some(ReqCmd::Bye(_)) => return Err(Error::new(Other, "received bye command")),
+                _ => return Err(Error::new(Other, "unknown command received")),
+            };
         }
+
+        Err(Error::new(Other, "cmd handler channel closed"))
     }
 
     async fn read_req(stream: &mut ReadHalf<'a>) -> Result<Request> {
@@ -152,12 +150,12 @@ impl<'a> PeerHandler<'a> {
 
         let size = u16::from_be_bytes(buf).into();
         if size > 1500 {
-            Err(Error::new(Other, "invalid message"))?;
+            return Err(Error::new(Other, "invalid message size"));
         }
         let mut buf = vec![0; size];
         stream.read_exact(&mut buf).await?;
 
-        Request::parse_from_bytes(&buf).map_err(|_| Error::new(Other, "invalid message"))
+        Request::parse_from_bytes(&buf).map_err(|_| Error::new(Other, "failed to parse request"))
     }
 
     async fn send_response(&mut self, cmd: RespCmd) -> Result<()> {
@@ -177,14 +175,13 @@ impl<'a> PeerHandler<'a> {
         self.peer_id = id;
         let mut peers = self.peers.lock().unwrap();
 
-        if match (*peers).get(&self.peer_id) {
-            Some(p) => p.id != self.id,
-            _ => false,
-        } {
-            log::debug!("update peer {}", self.peer_id);
-            peers.remove(&self.peer_id);
+        if let Some(p) = peers.get(&self.peer_id) {
+            if p.id != self.id {
+                log::debug!("updating peer {}", self.peer_id);
+                peers.remove(&self.peer_id);
+            }
         }
-        let mut p = peers
+        let p = peers
             .entry(self.peer_id.clone())
             .or_insert_with(|| PeerState {
                 id: self.id,
@@ -197,7 +194,7 @@ impl<'a> PeerHandler<'a> {
     }
 
     async fn handle_ping(&mut self, src_id: String, _ping: Ping) -> Result<()> {
-        log::trace!("ping {}", src_id);
+        log::trace!("handled ping from {}", src_id);
 
         self.insert_peerstate(src_id);
 
@@ -206,88 +203,66 @@ impl<'a> PeerHandler<'a> {
 
     async fn handle_isync(&mut self, src_id: String, isync: Isync) -> Result<()> {
         let dst_id = isync.get_id();
-        log::debug!("isync {} -> {}", src_id, dst_id);
+        log::debug!("handling isync from {} to {}", src_id, dst_id);
 
         let mut rdr = Redirect::new();
         rdr.set_id(dst_id.to_string());
 
-        if let Some((req_tx, freq)) = {
-            let peers = self.peers.lock().unwrap();
-            let p = match (*peers).get(dst_id) {
-                Some(p) => Some(p),
-                None => {
-                    log::debug!("{} not found", dst_id);
-                    None
-                }
-            };
+        let peer_opt = self.peers.lock().unwrap().get(dst_id).cloned();
+        if let Some(peer) = peer_opt {
+            rdr.set_addr(peer.addr.to_string());
 
-            if let Some(p) = p {
-                rdr.set_addr(p.addr.to_string());
+            // Forward sync request
+            let mut fsync = Fsync::new();
+            fsync.set_id(src_id.clone());
+            fsync.set_addr(self.stream.as_ref().peer_addr().unwrap().to_string());
+            let mut req = Request::new();
+            req.set_Fsync(fsync);
 
-                //forward
-                let mut fsync = Fsync::new();
-                fsync.set_id(src_id.clone());
-                fsync.set_addr(self.stream.as_ref().peer_addr().unwrap().to_string());
+            let _ = peer.req_tx.send(req).await;
 
-                let mut freq = Request::new();
-
-                freq.set_Fsync(fsync);
-
-                Some((p.req_tx.clone(), freq))
-            } else {
-                None
-            }
-        } {
-            //wait for reply (rsync)
+            // Wait for reply (rsync)
             self.insert_peerstate(src_id);
-
-            let _ = req_tx.send(freq).await;
             Ok(())
         } else {
+            log::debug!("destination {} not found", dst_id);
             self.send_response(RespCmd::Redirect(rdr)).await
         }
     }
 
     async fn handle_fsync(&mut self, fsync: Fsync) -> Result<()> {
-        log::debug!("fsync {} -> {} ", fsync.get_id(), self.peer_id);
+        log::debug!("handling fsync from {} to {}", fsync.get_id(), self.peer_id);
         self.send_response(RespCmd::Fsync(fsync)).await
     }
 
     async fn handle_rsync(&mut self, src_id: String, rsync: Rsync) -> Result<()> {
         let dst_id = rsync.get_id();
-        log::debug!("rsync {} -> {}", src_id, dst_id);
+        log::debug!("handling rsync from {} to {}", src_id, dst_id);
 
         if dst_id == self.peer_id {
-            let rdr = if let Some(p) = self.peers.lock().unwrap().get(&src_id) {
+            let peer_opt = self.peers.lock().unwrap().get(&src_id).cloned();
+            if let Some(peer) = peer_opt {
                 let mut rdr = Redirect::new();
                 rdr.set_id(src_id.to_string());
-                rdr.set_addr(p.addr.to_string());
-                rdr
+                rdr.set_addr(peer.addr.to_string());
+
+                return self.send_response(RespCmd::Redirect(rdr)).await;
             } else {
-                log::debug!("{} not found", src_id);
+                log::debug!("source {} not found", src_id);
                 return Ok(());
-            };
-
-            return self.send_response(RespCmd::Redirect(rdr)).await;
-        }
-
-        let req_tx = {
-            let peers = self.peers.lock().unwrap();
-            match (*peers).get(dst_id) {
-                Some(p) => p.req_tx.clone(),
-                None => {
-                    log::debug!("{} not found", dst_id);
-                    return Ok(());
-                }
             }
-        };
+        }
+        let peer_opt = self.peers.lock().unwrap().get(dst_id).cloned();
+        if let Some(peer) = peer_opt {
+            let mut req = Request::new();
+            req.set_id(src_id);
+            req.cmd = Some(ReqCmd::Rsync(rsync));
 
-        let mut req = Request::new();
-        req.set_id(src_id);
-        req.cmd = Some(ReqCmd::Rsync(rsync));
-
-        let _ = req_tx.send(req).await;
-
-        Ok(())
+            let _ = peer.req_tx.send(req).await;
+            Ok(())
+        } else {
+            log::debug!("destination {} not found", dst_id);
+            Ok(())
+        }
     }
 }

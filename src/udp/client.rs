@@ -15,10 +15,9 @@ use std::sync::{
 use std::thread::spawn;
 use std::time::{Duration, Instant};
 
-/// Udp socket builder
+/// UDP socket builder
 ///
-///
-/// # example
+/// Example
 /// ```no_run
 /// use rndz::udp::Client;
 ///
@@ -32,7 +31,7 @@ use std::time::{Duration, Instant};
 /// use rndz::udp::Client;
 ///
 /// let mut c2 = Client::new("rndz_server:1234", "c2", None).unwrap();
-/// let s= c2.connect("c1").unwrap();
+/// let s = c2.connect("c1").unwrap();
 /// s.send(b"hello").unwrap();
 /// ```
 pub struct Client {
@@ -52,14 +51,14 @@ impl Drop for Client {
 }
 
 impl Client {
-    /// set rendezvous server, peer identity, local bind address.
-    /// if no local address set, choose according server address type(ipv4 or ipv6).
+    /// Set rendezvous server, peer identity, local bind address.
+    /// If no local address set, choose according to server address type (IPv4 or IPv6).
     pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
         let svr_sk = Self::connect_server(server_addr, local_addr)?;
         Self::_new(svr_sk, id)
     }
 
-    /// svr_sk is used to connect with rndz server
+    /// Server socket is used to connect with rndz server
     pub fn new_with_socket(svr_addr: &str, id: &str, svr_sk: UdpSocket) -> Result<Self> {
         svr_sk.connect(svr_addr)?;
         let svr_sk: Socket = svr_sk.into();
@@ -68,6 +67,7 @@ impl Client {
         Self::_new(svr_sk, id)
     }
 
+    // Internal method to create a new Client
     fn _new(svr_sk: Socket, id: &str) -> Result<Self> {
         let local_addr = svr_sk.local_addr().unwrap().as_socket().unwrap();
 
@@ -81,21 +81,22 @@ impl Client {
         })
     }
 
-    /// local address
+    /// Get local address
     pub fn local_addr(&self) -> Option<SocketAddr> {
         Some(self.local_addr)
     }
 
-    /// last recv pong from server
+    /// Get the last received pong from server
     pub fn last_pong(&self) -> Option<Instant> {
         *self.last_pong.read().unwrap()
     }
 
+    // Connect to server
     fn connect_server(server_addr: &str, local_addr: Option<SocketAddr>) -> Result<Socket> {
         let server_addr = server_addr
             .to_socket_addrs()?
             .next()
-            .ok_or_else(|| Error::new(Other, "no addr"))?;
+            .ok_or_else(|| Error::new(Other, "No address found"))?;
 
         let local_addr = match local_addr {
             Some(addr) => addr,
@@ -114,12 +115,14 @@ impl Client {
         Ok(svr_sk)
     }
 
+    // Drop server socket
     fn drop_server_sk(&mut self) {
         if let Some(mut s) = self.svr_sk.take() {
             Self::send_cmd(&mut s, &self.id, ReqCmd::Bye(Bye::new()), self.server_addr);
         };
     }
 
+    // Create new socket
     fn create_socket(domain: Domain) -> Result<Socket> {
         let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).unwrap();
         socket.set_reuse_address(true)?;
@@ -127,6 +130,7 @@ impl Client {
         Ok(socket)
     }
 
+    // Create new request
     fn new_req(myid: &str) -> Request {
         let mut req = Request::new();
         req.set_id(myid.to_string());
@@ -134,6 +138,7 @@ impl Client {
         req
     }
 
+    // Receive response from server
     fn recv_resp(&mut self) -> Result<Response> {
         let mut buf = unsafe { MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init() }; //MaybeUninit::uninit_array
         let n = self.svr_sk.as_ref().unwrap().recv(&mut buf)?;
@@ -142,22 +147,21 @@ impl Client {
         Ok(resp)
     }
 
-    /// send rendezvous server a request to connect target peer.
+    /// Send rendezvous server a request to connect to target peer.
     ///
-    /// create a connected udp socket with peer stored in peer_sk field, use as_socket() to get it.
-    ///
+    /// Create a connected UDP socket with peer stored in peer_sk field, use `as_socket()` to get it.
     pub fn connect(&mut self, target_id: &str) -> Result<UdpSocket> {
         if self.svr_sk.is_none() {
-            //This is a reconnect
+            // This is a reconnect
             self.svr_sk = Some(Self::connect_server(
                 &self.server_addr.to_string(),
                 Some(self.local_addr),
             )?);
 
-            //From now on, there are two same port socket, WINDOWS will confuse!
-            //Windows can't works well with two same port sockets.
+            // From now on, there are two same port sockets, WINDOWS will confuse!
+            // Windows can't work well with two same port sockets.
 
-            //NOTE: DON'T reconnect on WINDOWS!!!!
+            // NOTE: DON'T reconnect on WINDOWS!!!!
             #[cfg(windows)]
             log::warn!("WARNING: reconnect not works on WINDOWS!!!");
         }
@@ -189,18 +193,23 @@ impl Client {
                         peer_addr = Some(rdr.addr);
                         break;
                     } else {
-                        return Err(Error::new(Other, "target not found"));
+                        return Err(Error::new(Other, "Target not found"));
                     }
                 }
             }
         }
 
         let peer_addr: SocketAddr = peer_addr
-            .ok_or_else(|| Error::new(Other, "no response"))?
+            .ok_or_else(|| Error::new(Other, "No response"))?
             .parse()
-            .map_err(|_| Error::new(Other, "rndz server response invalid peer address"))?;
+            .map_err(|_| {
+                Error::new(
+                    Other,
+                    "Rendezvous server response contains invalid peer address",
+                )
+            })?;
 
-        //we don't need svr_sk any more, to prevent interferce with peer_sk on WINDOWS, we drop it.
+        // We don't need svr_sk anymore, to prevent interference with peer_sk on WINDOWS, we drop it.
         self.drop_server_sk();
 
         let domain = Domain::for_address(self.local_addr);
@@ -211,10 +220,10 @@ impl Client {
         Ok(peer_sk.into())
     }
 
-    /// keep ping rendezvous server, wait for peer connection request.
+    /// Keep pinging rendezvous server, wait for peer connection request.
     ///
-    /// when received `Fsync` request from server, attempt to send remote peer a packet
-    /// this will open the firwall and nat rule for the peer.
+    /// When receiving `Fsync` request from server, attempt to send remote peer a packet.
+    /// This will open the firewall and NAT rule for the peer.
     pub fn listen(&mut self) -> Result<UdpSocket> {
         #[cfg(windows)]
         log::warn!("WARNING: listen not works on WINDOWS!!!");
@@ -276,7 +285,7 @@ impl Client {
                         match fsync.get_addr().parse() {
                             Ok(addr) => Self::send_rsync(&mut svr_sk, &myid, fsync.get_id(), addr),
                             _ => {
-                                log::debug!("invalid fsync addr");
+                                log::debug!("Invalid fsync address");
                                 continue;
                             }
                         };
@@ -292,6 +301,7 @@ impl Client {
         Ok(peer_sk.into())
     }
 
+    // Send rsync command
     fn send_rsync(socket: &mut Socket, myid: &str, target_id: &str, addr: SocketAddr) {
         let mut rsync = Rsync::new();
         rsync.set_id(target_id.to_string());
@@ -299,6 +309,7 @@ impl Client {
         Self::send_cmd(socket, myid, ReqCmd::Rsync(rsync), addr);
     }
 
+    // Send command
     fn send_cmd(socket: &mut Socket, myid: &str, cmd: ReqCmd, addr: SocketAddr) {
         let mut req = Request::new();
         req.set_id(myid.to_string());

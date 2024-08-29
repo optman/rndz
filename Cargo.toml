@@ -2,7 +2,7 @@
 name = "rndz"
 version = "0.1.4"
 edition = "2021"
-description = "A simple rendezvous protocol implementation to help NAT traversal or hole punching."
+description = "A simple rendezvous protocol implementation to help with NAT traversal or hole punchin"
 repository = "https://github.com/optman/rndz"
 license = "MIT"
 
@@ -12,7 +12,7 @@ license = "MIT"
 #
 
 [build-dependencies]
-protobuf-codegen-pure = "2.27" 
+protobuf-codegen-pure = "2.27"
 
 [features]
 default = ["client", "server", "async", "env_logger", "structopt"]
@@ -21,9 +21,9 @@ async = ["tokio"]
 client = []
 
 [dependencies]
-log={version="0.4"}
-env_logger={version="0.9", optional=true}
-structopt={version="0.3", optional=true}
-protobuf="2.27"
-socket2={version="0.4", features=["all"]}
-tokio={version="1", features=["full"], optional=true}
+log = { version = "0.4" }
+env_logger = { version = "0.9", optional = true }
+structopt = { version = "0.3", optional = true }
+protobuf = "2.27"
+socket2 = { version = "0.4", features = ["all"] }
+tokio = { version = "1", features = ["full"], optional = true }
