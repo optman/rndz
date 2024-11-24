@@ -88,10 +88,7 @@ impl Server {
     fn handle_ping(&mut self, id: String, _ping: Ping, addr: SocketAddr) {
         log::trace!("Ping from {}", id);
 
-        let c = self
-            .clients
-            .entry(id.clone())
-            .or_insert_with(Client::default);
+        let c = self.clients.entry(id.clone()).or_default();
         c.last_ping = Instant::now();
         c.addr = addr;
 
@@ -103,10 +100,7 @@ impl Server {
         log::debug!("Isync from {} to {}", id, target_id);
 
         if let Some(t) = self.clients.get(target_id).copied() {
-            let s = self
-                .clients
-                .entry(id.clone())
-                .or_insert_with(Client::default);
+            let s = self.clients.entry(id.clone()).or_default();
             s.last_ping = Instant::now();
             s.addr = addr;
 
