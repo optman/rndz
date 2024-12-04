@@ -5,9 +5,9 @@ use std::io::Result;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
-use crate::proto::{
-    Fsync, Isync, Ping, Pong, Redirect, Request, Request_oneof_cmd as ReqCmd, Response,
-    Response_oneof_cmd as RespCmd, Rsync,
+use crate::proto::rndz::{
+    request::Cmd as ReqCmd, response::Cmd as RespCmd, Fsync, Isync, Ping, Pong, Redirect, Request,
+    Response, Rsync,
 };
 
 #[derive(Copy, Clone)]
@@ -78,7 +78,7 @@ impl Server {
 
     fn send_response(&mut self, cmd: RespCmd, id: String, addr: SocketAddr) {
         let mut resp = Response::new();
-        resp.set_id(id);
+        resp.id = id;
         resp.cmd = Some(cmd);
 
         let vec = resp.write_to_bytes().unwrap();
@@ -96,34 +96,34 @@ impl Server {
     }
 
     fn handle_isync(&mut self, id: String, isync: Isync, addr: SocketAddr) {
-        let target_id = isync.get_id();
+        let target_id = isync.id;
         log::debug!("Isync from {} to {}", id, target_id);
 
-        if let Some(t) = self.clients.get(target_id).copied() {
+        if let Some(t) = self.clients.get(&target_id).copied() {
             let s = self.clients.entry(id.clone()).or_default();
             s.last_ping = Instant::now();
             s.addr = addr;
 
             let mut fsync = Fsync::new();
-            fsync.set_id(id);
-            fsync.set_addr(addr.to_string());
+            fsync.id = id;
+            fsync.addr = addr.to_string();
             self.send_response(RespCmd::Fsync(fsync), target_id.to_string(), t.addr);
         } else {
             log::debug!("Target ID {} not found", target_id);
             let mut rdr = Redirect::new();
-            rdr.set_id(target_id.to_string());
+            rdr.id = target_id;
             self.send_response(RespCmd::Redirect(rdr), id, addr);
         }
     }
 
     fn handle_rsync(&mut self, id: String, rsync: Rsync, addr: SocketAddr) {
-        let target_id = rsync.get_id();
+        let target_id = rsync.id;
         log::debug!("Rsync from {} to {}", id, target_id);
 
-        if let Some(c) = self.clients.get(target_id).copied() {
+        if let Some(c) = self.clients.get(&target_id).copied() {
             let mut rdr = Redirect::new();
-            rdr.set_id(id);
-            rdr.set_addr(addr.to_string());
+            rdr.id = id;
+            rdr.addr = addr.to_string();
             self.send_response(RespCmd::Redirect(rdr), target_id.to_string(), c.addr);
         } else {
             log::debug!("Rsync could not find target {}", target_id);

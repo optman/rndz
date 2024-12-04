@@ -12,7 +12,7 @@ license = "MIT"
 #
 
 [build-dependencies]
-protobuf-codegen-pure = "2.28"
+protobuf-codegen = "3.7.1"
 
 [features]
 default = ["client", "server", "async", "env_logger", "structopt"]
@@ -21,9 +21,9 @@ async = ["tokio"]
 client = []
 
 [dependencies]
-log = { version = "0.4" }
-env_logger = { version = "0.9", optional = true }
-structopt = { version = "0.3", optional = true }
-protobuf = "2.28"
-socket2 = { version = "0.4", features = ["all"] }
-tokio = { version = "1", features = ["full"], optional = true }
+log = { version = "0.4.22" }
+env_logger = { version = "0.11.5", optional = true }
+structopt = { version = "0.3.26", optional = true }
+protobuf = "3.7.1"
+socket2 = { version = "0.5.8", features = ["all"] }
+tokio = { version = "1.42.0", features = ["full"], optional = true }

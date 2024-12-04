@@ -1,6 +1,5 @@
-use crate::proto::{
-    Bye, Isync, Ping, Request, Request_oneof_cmd as ReqCmd, Response,
-    Response_oneof_cmd as RespCmd, Rsync,
+use crate::proto::rndz::{
+    request::Cmd as ReqCmd, response::Cmd as RespCmd, Bye, Isync, Ping, Request, Response, Rsync,
 };
 use log;
 use protobuf::Message;
@@ -143,7 +142,7 @@ impl Client {
     // Create new request
     fn new_req(myid: &str) -> Request {
         let mut req = Request::new();
-        req.set_id(myid.to_string());
+        req.id = myid.into();
 
         req
     }
@@ -178,7 +177,7 @@ impl Client {
         }
 
         let mut isync = Isync::new();
-        isync.set_id(target_id.into());
+        isync.id = target_id.into();
 
         let mut req = Self::new_req(&self.id);
         req.set_Isync(isync);
@@ -195,7 +194,7 @@ impl Client {
             self.svr_sk.as_ref().unwrap().send(isync.as_ref())?;
 
             if let Ok(resp) = self.recv_resp() {
-                if resp.get_id() != self.id {
+                if resp.id != self.id {
                     continue;
                 }
 
@@ -278,7 +277,7 @@ impl Client {
                     Err(_) => continue,
                 };
 
-                if resp.get_id() != myid {
+                if resp.id != myid {
                     continue;
                 }
 
@@ -287,12 +286,12 @@ impl Client {
                         *last_pong.write().unwrap() = Some(Instant::now());
                     }
                     Some(RespCmd::Fsync(fsync)) => {
-                        log::debug!("fsync {}", fsync.get_id());
+                        log::debug!("fsync {}", fsync.id);
 
-                        Self::send_rsync(&mut svr_sk, &myid, fsync.get_id(), server_addr);
+                        Self::send_rsync(&mut svr_sk, &myid, &fsync.id, server_addr);
 
-                        match fsync.get_addr().parse() {
-                            Ok(addr) => Self::send_rsync(&mut svr_sk, &myid, fsync.get_id(), addr),
+                        match fsync.addr.parse() {
+                            Ok(addr) => Self::send_rsync(&mut svr_sk, &myid, &fsync.id, addr),
                             _ => {
                                 log::debug!("Invalid fsync address");
                                 continue;
@@ -311,7 +310,7 @@ impl Client {
     // Send rsync command
     fn send_rsync(socket: &mut Socket, myid: &str, target_id: &str, addr: SocketAddr) {
         let mut rsync = Rsync::new();
-        rsync.set_id(target_id.to_string());
+        rsync.id = target_id.into();
 
         Self::send_cmd(socket, myid, ReqCmd::Rsync(rsync), addr);
     }
@@ -319,7 +318,7 @@ impl Client {
     // Send command
     fn send_cmd(socket: &mut Socket, myid: &str, cmd: ReqCmd, addr: SocketAddr) {
         let mut req = Request::new();
-        req.set_id(myid.to_string());
+        req.id = myid.into();
         req.cmd = Some(cmd);
 
         let _ = socket.send_to(req.write_to_bytes().unwrap().as_ref(), &addr.into());

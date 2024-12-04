@@ -1,6 +1,6 @@
-use crate::proto::{
-    Bye, Fsync, Isync, Ping, Pong, Redirect, Request, Request_oneof_cmd as ReqCmd, Response,
-    Response_oneof_cmd as RespCmd, Rsync,
+use crate::proto::rndz::{
+    request::Cmd as ReqCmd, response::Cmd as RespCmd, Bye, Fsync, Isync, Ping, Pong, Redirect,
+    Request, Response, Rsync,
 };
 use log;
 use protobuf::Message;
@@ -130,7 +130,7 @@ impl<'a> PeerHandler<'a> {
 
     async fn handle_cmds(&mut self) -> Result<()> {
         while let Some(req) = self.req_rx.recv().await {
-            let src_id = req.get_id().to_string();
+            let src_id = req.id;
             match req.cmd {
                 Some(ReqCmd::Ping(ping)) => self.handle_ping(src_id, ping).await?,
                 Some(ReqCmd::Isync(isync)) => self.handle_isync(src_id, isync).await?,
@@ -202,20 +202,20 @@ impl<'a> PeerHandler<'a> {
     }
 
     async fn handle_isync(&mut self, src_id: String, isync: Isync) -> Result<()> {
-        let dst_id = isync.get_id();
+        let dst_id = isync.id;
         log::debug!("handling isync from {} to {}", src_id, dst_id);
 
         let mut rdr = Redirect::new();
-        rdr.set_id(dst_id.to_string());
+        rdr.id = dst_id.clone();
 
-        let peer_opt = self.peers.lock().unwrap().get(dst_id).cloned();
+        let peer_opt = self.peers.lock().unwrap().get(&dst_id).cloned();
         if let Some(peer) = peer_opt {
-            rdr.set_addr(peer.addr.to_string());
+            rdr.addr = peer.addr.to_string();
 
             // Forward sync request
             let mut fsync = Fsync::new();
-            fsync.set_id(src_id.clone());
-            fsync.set_addr(self.stream.as_ref().peer_addr().unwrap().to_string());
+            fsync.id = src_id.clone();
+            fsync.addr = self.stream.as_ref().peer_addr().unwrap().to_string();
             let mut req = Request::new();
             req.set_Fsync(fsync);
 
@@ -231,20 +231,20 @@ impl<'a> PeerHandler<'a> {
     }
 
     async fn handle_fsync(&mut self, fsync: Fsync) -> Result<()> {
-        log::debug!("handling fsync from {} to {}", fsync.get_id(), self.peer_id);
+        log::debug!("handling fsync from {} to {}", fsync.id, self.peer_id);
         self.send_response(RespCmd::Fsync(fsync)).await
     }
 
     async fn handle_rsync(&mut self, src_id: String, rsync: Rsync) -> Result<()> {
-        let dst_id = rsync.get_id();
+        let dst_id = rsync.id.clone();
         log::debug!("handling rsync from {} to {}", src_id, dst_id);
 
         if dst_id == self.peer_id {
             let peer_opt = self.peers.lock().unwrap().get(&src_id).cloned();
             if let Some(peer) = peer_opt {
                 let mut rdr = Redirect::new();
-                rdr.set_id(src_id.to_string());
-                rdr.set_addr(peer.addr.to_string());
+                rdr.id = src_id;
+                rdr.addr = peer.addr.to_string();
 
                 return self.send_response(RespCmd::Redirect(rdr)).await;
             } else {
@@ -252,10 +252,10 @@ impl<'a> PeerHandler<'a> {
                 return Ok(());
             }
         }
-        let peer_opt = self.peers.lock().unwrap().get(dst_id).cloned();
+        let peer_opt = self.peers.lock().unwrap().get(&dst_id).cloned();
         if let Some(peer) = peer_opt {
             let mut req = Request::new();
-            req.set_id(src_id);
+            req.id = src_id;
             req.cmd = Some(ReqCmd::Rsync(rsync));
 
             let _ = peer.req_tx.send(req).await;

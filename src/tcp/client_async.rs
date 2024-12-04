@@ -1,6 +1,5 @@
-use crate::proto::{
-    Isync, Ping, Request, Request_oneof_cmd as ReqCmd, Response, Response_oneof_cmd as RespCmd,
-    Rsync,
+use crate::proto::rndz::{
+    request::Cmd as ReqCmd, response::Cmd as RespCmd, Isync, Ping, Request, Response, Rsync,
 };
 use protobuf::Message;
 use std::io::{Error, ErrorKind::Other, Result};
@@ -111,7 +110,7 @@ impl Client {
         let (mut r, mut w) = svr.into_split();
 
         let mut isync = Isync::new();
-        isync.set_id(target_id.into());
+        isync.id = target_id.into();
 
         Self::write_req(self.id.clone(), &mut w, ReqCmd::Isync(isync)).await?;
 
@@ -132,7 +131,7 @@ impl Client {
 
     fn new_req(id: String) -> Request {
         let mut req = Request::new();
-        req.set_id(id);
+        req.id = id;
         req
     }
 
@@ -160,10 +159,10 @@ impl Client {
             Ok(resp) => match resp.cmd {
                 Some(RespCmd::Pong(_)) => Ok(None),
                 Some(RespCmd::Fsync(fsync)) => {
-                    log::debug!("fsync {}", fsync.get_id());
+                    log::debug!("fsync {}", fsync.id);
 
                     let dst_addr: SocketAddr = fsync
-                        .get_addr()
+                        .addr
                         .parse()
                         .map_err(|_| Error::new(Other, "invalid fsync address"))?;
 
@@ -173,7 +172,7 @@ impl Client {
                     }
 
                     let mut rsync = Rsync::new();
-                    rsync.set_id(fsync.get_id().to_string());
+                    rsync.id = fsync.id;
                     Ok(Some(ReqCmd::Rsync(rsync)))
                 }
                 _ => Ok(None),
@@ -282,7 +281,9 @@ impl Client {
         let id = self.id.clone();
         let server_addr = self.server_addr.clone();
         let exit = self.exit.clone();
-        let mut broken = Self::start_background(id.clone(), local_addr, server_addr.clone(), exit.clone()).await?;
+        let mut broken =
+            Self::start_background(id.clone(), local_addr, server_addr.clone(), exit.clone())
+                .await?;
 
         spawn(async move {
             loop {
@@ -299,7 +300,9 @@ impl Client {
                         local_addr,
                         server_addr.clone(),
                         exit.clone(),
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(broken) => {
                             log::debug!("Connected to server successfully");
                             break broken;

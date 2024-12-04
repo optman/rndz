@@ -1,6 +1,5 @@
-use crate::proto::{
-    Isync, Ping, Request, Request_oneof_cmd as ReqCmd, Response, Response_oneof_cmd as RespCmd,
-    Rsync,
+use crate::proto::rndz::{
+    request::Cmd as ReqCmd, response::Cmd as RespCmd, Isync, Ping, Request, Response, Rsync,
 };
 use protobuf::Message;
 use socket2::{Domain, Protocol, Socket, Type};
@@ -126,7 +125,7 @@ impl Client {
         let mut svr = Self::connect_server(self.choose_bind_addr()?, &self.server_addr)?;
 
         let mut isync = Isync::new();
-        isync.set_id(target_id.into());
+        isync.id = target_id.into();
 
         Self::write_req(self.id.clone(), &mut svr, ReqCmd::Isync(isync))?;
 
@@ -151,7 +150,7 @@ impl Client {
 
     fn new_req(id: String) -> Request {
         let mut req = Request::new();
-        req.set_id(id);
+        req.id = id;
 
         req
     }
@@ -195,10 +194,10 @@ impl Client {
             let req = match resp.cmd {
                 Some(RespCmd::Pong(_)) => None,
                 Some(RespCmd::Fsync(fsync)) => {
-                    log::debug!("fsync {}", fsync.get_id());
+                    log::debug!("fsync {}", fsync.id);
 
                     let dst_addr: SocketAddr = fsync
-                        .get_addr()
+                        .addr
                         .parse()
                         .map_err(|_| Error::new(Other, "invalid fsync addr"))?;
 
@@ -208,7 +207,7 @@ impl Client {
                         .map(|s| s.connect_timeout(&dst_addr.into(), Duration::from_micros(1)));
 
                     let mut rsync = Rsync::new();
-                    rsync.set_id(fsync.get_id().to_string());
+                    rsync.id = fsync.id;
                     Some(ReqCmd::Rsync(rsync))
                 }
                 _ => None,
