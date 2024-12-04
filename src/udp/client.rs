@@ -8,12 +8,17 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Result};
 use std::mem::MaybeUninit;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::os::fd::{AsRawFd, RawFd};
 use std::sync::{
     atomic::{AtomicBool, Ordering::Relaxed},
     Arc, RwLock,
 };
 use std::thread::spawn;
 use std::time::{Duration, Instant};
+
+pub trait SocketConfigure {
+    fn config_socket(&self, sk: RawFd) -> Result<()>;
+}
 
 /// UDP socket builder
 ///
@@ -36,6 +41,7 @@ use std::time::{Duration, Instant};
 /// ```
 pub struct Client {
     svr_sk: Option<Socket>,
+    sk_cfg: Option<Box<dyn SocketConfigure>>,
     server_addr: SocketAddr,
     id: String,
     local_addr: SocketAddr,
@@ -53,26 +59,18 @@ impl Drop for Client {
 impl Client {
     /// Set rendezvous server, peer identity, local bind address.
     /// If no local address set, choose according to server address type (IPv4 or IPv6).
-    pub fn new(server_addr: &str, id: &str, local_addr: Option<SocketAddr>) -> Result<Self> {
-        let svr_sk = Self::connect_server(server_addr, local_addr)?;
-        Self::_new(svr_sk, id)
-    }
-
-    /// Server socket is used to connect with rndz server
-    pub fn new_with_socket(svr_addr: &str, id: &str, svr_sk: UdpSocket) -> Result<Self> {
-        svr_sk.connect(svr_addr)?;
-        let svr_sk: Socket = svr_sk.into();
-        svr_sk.set_nonblocking(false)?;
-        svr_sk.set_reuse_address(true)?;
-        Self::_new(svr_sk, id)
-    }
-
-    // Internal method to create a new Client
-    fn _new(svr_sk: Socket, id: &str) -> Result<Self> {
+    pub fn new(
+        server_addr: &str,
+        id: &str,
+        local_addr: Option<SocketAddr>,
+        sk_cfg: Option<Box<dyn SocketConfigure>>,
+    ) -> Result<Self> {
+        let svr_sk = Self::connect_server(server_addr, local_addr, sk_cfg.as_ref())?;
         let local_addr = svr_sk.local_addr().unwrap().as_socket().unwrap();
 
         Ok(Self {
             server_addr: svr_sk.peer_addr().unwrap().as_socket().unwrap(),
+            sk_cfg,
             svr_sk: Some(svr_sk),
             id: id.into(),
             local_addr,
@@ -92,7 +90,11 @@ impl Client {
     }
 
     // Connect to server
-    fn connect_server(server_addr: &str, local_addr: Option<SocketAddr>) -> Result<Socket> {
+    fn connect_server(
+        server_addr: &str,
+        local_addr: Option<SocketAddr>,
+        sk_cfg: Option<&Box<dyn SocketConfigure>>,
+    ) -> Result<Socket> {
         let server_addr = server_addr
             .to_socket_addrs()?
             .next()
@@ -106,10 +108,8 @@ impl Client {
             },
         };
 
-        let domain = Domain::for_address(local_addr);
-
-        let svr_sk = Self::create_socket(domain)?;
-        svr_sk.bind(&local_addr.into())?;
+        let svr_sk = Self::create_socket(local_addr, sk_cfg)?;
+        svr_sk.set_nonblocking(false)?;
         svr_sk.connect(&server_addr.into())?;
 
         Ok(svr_sk)
@@ -123,9 +123,19 @@ impl Client {
     }
 
     // Create new socket
-    fn create_socket(domain: Domain) -> Result<Socket> {
+    fn create_socket(
+        addr: SocketAddr,
+        sk_cfg: Option<&Box<dyn SocketConfigure>>,
+    ) -> Result<Socket> {
+        let domain = Domain::for_address(addr);
         let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).unwrap();
+
+        if let Some(cfg) = sk_cfg {
+            cfg.config_socket(socket.as_raw_fd())?;
+        }
+
         socket.set_reuse_address(true)?;
+        socket.bind(&addr.into())?;
 
         Ok(socket)
     }
@@ -156,6 +166,7 @@ impl Client {
             self.svr_sk = Some(Self::connect_server(
                 &self.server_addr.to_string(),
                 Some(self.local_addr),
+                self.sk_cfg.as_ref(),
             )?);
 
             // From now on, there are two same port sockets, WINDOWS will confuse!
@@ -212,9 +223,7 @@ impl Client {
         // We don't need svr_sk anymore, to prevent interference with peer_sk on WINDOWS, we drop it.
         self.drop_server_sk();
 
-        let domain = Domain::for_address(self.local_addr);
-        let peer_sk = Self::create_socket(domain)?;
-        peer_sk.bind(&self.local_addr.into())?;
+        let peer_sk = Self::create_socket(self.local_addr, self.sk_cfg.as_ref())?;
         peer_sk.connect(&peer_addr.into())?;
 
         Ok(peer_sk.into())
@@ -295,9 +304,7 @@ impl Client {
             }
         });
 
-        let domain = Domain::for_address(self.local_addr);
-        let peer_sk = Self::create_socket(domain)?;
-        peer_sk.bind(&self.local_addr.into())?;
+        let peer_sk = Self::create_socket(self.local_addr, self.sk_cfg.as_ref())?;
         Ok(peer_sk.into())
     }
 

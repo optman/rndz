@@ -8,6 +8,8 @@
 mod client;
 #[cfg(feature = "client")]
 pub use client::Client;
+#[cfg(feature = "client")]
+pub use client::SocketConfigure;
 
 #[cfg(feature = "server")]
 mod server;
