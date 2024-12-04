@@ -64,7 +64,7 @@ impl Client {
         local_addr: Option<SocketAddr>,
         sk_cfg: Option<Box<dyn SocketConfigure>>,
     ) -> Result<Self> {
-        let svr_sk = Self::connect_server(server_addr, local_addr, sk_cfg.as_ref())?;
+        let svr_sk = Self::connect_server(server_addr, local_addr, sk_cfg.as_deref())?;
         let local_addr = svr_sk.local_addr().unwrap().as_socket().unwrap();
 
         Ok(Self {
@@ -92,7 +92,7 @@ impl Client {
     fn connect_server(
         server_addr: &str,
         local_addr: Option<SocketAddr>,
-        sk_cfg: Option<&Box<dyn SocketConfigure>>,
+        sk_cfg: Option<&dyn SocketConfigure>,
     ) -> Result<Socket> {
         let server_addr = server_addr
             .to_socket_addrs()?
@@ -122,10 +122,7 @@ impl Client {
     }
 
     // Create new socket
-    fn create_socket(
-        addr: SocketAddr,
-        sk_cfg: Option<&Box<dyn SocketConfigure>>,
-    ) -> Result<Socket> {
+    fn create_socket(addr: SocketAddr, sk_cfg: Option<&dyn SocketConfigure>) -> Result<Socket> {
         let domain = Domain::for_address(addr);
         let socket = Socket::new(domain, Type::DGRAM, Some(Protocol::UDP)).unwrap();
 
@@ -165,7 +162,7 @@ impl Client {
             self.svr_sk = Some(Self::connect_server(
                 &self.server_addr.to_string(),
                 Some(self.local_addr),
-                self.sk_cfg.as_ref(),
+                self.sk_cfg.as_deref(),
             )?);
 
             // From now on, there are two same port sockets, WINDOWS will confuse!
@@ -222,7 +219,7 @@ impl Client {
         // We don't need svr_sk anymore, to prevent interference with peer_sk on WINDOWS, we drop it.
         self.drop_server_sk();
 
-        let peer_sk = Self::create_socket(self.local_addr, self.sk_cfg.as_ref())?;
+        let peer_sk = Self::create_socket(self.local_addr, self.sk_cfg.as_deref())?;
         peer_sk.connect(&peer_addr.into())?;
 
         Ok(peer_sk.into())
@@ -303,7 +300,7 @@ impl Client {
             }
         });
 
-        let peer_sk = Self::create_socket(self.local_addr, self.sk_cfg.as_ref())?;
+        let peer_sk = Self::create_socket(self.local_addr, self.sk_cfg.as_deref())?;
         Ok(peer_sk.into())
     }
 
