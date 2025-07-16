@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             match c.listen() {
                 Ok(_) => {
                     let (mut s, _) = c.accept().unwrap();
-                    s.write(b"hello").unwrap();
+                    s.write_all(b"hello").unwrap();
                     break;
                 }
                 _ => {
@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let mut buf = [0; 5];
-    s.read(&mut buf)?;
+    s.read_exact(&mut buf)?;
 
     t.join().unwrap();
 

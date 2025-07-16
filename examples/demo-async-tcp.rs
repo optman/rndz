@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 match c.listen().await {
                     Ok(_) => {
                         let (mut s, _) = c.accept().await.unwrap();
-                        s.write(b"hello").await.unwrap();
+                        s.write_all(b"hello").await.unwrap();
                         break;
                     }
                     _ => {
@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let mut buf = [0; 5];
-    s.read(&mut buf).await?;
+    s.read_exact(&mut buf).await?;
 
     t.await?;
 
