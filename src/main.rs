@@ -62,7 +62,7 @@ async fn run_server(opt: ServerOpt) -> Result<()> {
 
 async fn run_client(opt: ClientOpt) -> Result<()> {
     if !opt.tcp {
-        let mut c = udp::Client::new(&opt.server_addr, &opt.id, None, None)?;
+        let mut c = udp::Client::new(&[&opt.server_addr], &opt.id, None, None)?;
 
         match opt.remote_peer {
             Some(peer) => {

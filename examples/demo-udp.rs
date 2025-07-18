@@ -4,6 +4,7 @@ use std::thread;
 use std::time;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::init();
     let server_addr = "127.0.0.1:8888";
 
     {
@@ -12,7 +13,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let t = {
         thread::spawn(move || {
-            let mut c = Client::new(server_addr, "c1", None, None).unwrap();
+            let mut c = Client::new(&[server_addr], "c1", None, None).unwrap();
             let s = c.listen().unwrap();
             let mut buf = [0; 10];
             let n = s.recv(&mut buf).unwrap();
@@ -21,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     loop {
-        let mut c = Client::new(server_addr, "c2", None, None).unwrap();
+        let mut c = Client::new(&[server_addr], "c2", None, None).unwrap();
         match c.connect("c1") {
             Ok(s) => {
                 s.send(b"hello").unwrap();
