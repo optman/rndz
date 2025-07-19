@@ -4,6 +4,7 @@ use crate::proto::rndz::{
 use log;
 use nix::poll::{poll, PollFd, PollFlags};
 use protobuf::Message;
+use rand::Rng;
 use socket2::{Domain, Protocol, Socket, Type};
 use std::io::{Error, ErrorKind::Other, Result};
 use std::mem::MaybeUninit;
@@ -41,7 +42,7 @@ pub trait SocketConfigure {
 /// s.send(b"hello").unwrap();
 /// ```
 pub struct Client {
-    svr_sks: Vec<(Socket, SocketAddr)>,
+    svr_sks: Option<Vec<(Socket, SocketAddr)>>,
     sk_cfg: Option<Box<dyn SocketConfigure>>,
     id: String,
     local_addr: Option<SocketAddr>,
@@ -75,7 +76,7 @@ impl Client {
         let last_pong = Arc::new(RwLock::new(vec![None; server_addrs.len()]));
 
         Ok(Self {
-            svr_sks: Vec::new(),
+            svr_sks: None,
             sk_cfg,
             id: id.into(),
             local_addr,
@@ -92,7 +93,7 @@ impl Client {
             self.sk_cfg.as_deref(),
         )?;
 
-        self.svr_sks = svr_sks;
+        self.svr_sks = Some(svr_sks);
         self.local_addr = Some(local_addr);
 
         Ok(())
@@ -138,8 +139,10 @@ impl Client {
 
     // Drop all server sockets
     fn drop_server_sks(&mut self) {
-        for (s, addr) in self.svr_sks.drain(..) {
-            Self::send_cmd(&s, &self.id, ReqCmd::Bye(Bye::new()), addr);
+        if let Some(sks) = self.svr_sks.take() {
+            for (s, addr) in sks {
+                Self::send_cmd(&s, &self.id, ReqCmd::Bye(Bye::new()), addr);
+            }
         }
     }
 
@@ -329,77 +332,98 @@ impl Client {
         let last_pong = self.last_pong.clone();
         let keepalive_to = Duration::from_secs(10);
 
-        // Prepare ping message once to share between threads
+        // Prepare ping message once
         let mut req = Self::new_req(&myid);
         req.set_Ping(Ping::new());
-        let ping = req.write_to_bytes().unwrap();
+        let ping = req.write_to_bytes()?;
 
-        // Start a separate thread for each server
-        for (i, (sk, server_addr)) in self.svr_sks.iter().enumerate() {
-            let sk = sk.try_clone().unwrap();
-            let server_addr = *server_addr;
-            let myid = myid.clone();
-            let exit = exit.clone();
-            let last_pong = last_pong.clone();
-            let ping = ping.clone();
+        // Set all sockets to non-blocking
+        if let Some(ref sks) = self.svr_sks {
+            for (sk, _) in sks {
+                sk.set_nonblocking(true)?;
+            }
+        }
 
-            spawn(move || {
-                let mut ping_time: Option<Instant> = None;
-                sk.set_read_timeout(Some(keepalive_to)).unwrap();
+        let svr_sks = self.svr_sks.take().unwrap();
 
-                loop {
-                    if exit.load(Relaxed) {
-                        break;
-                    }
+        spawn(move || {
+            // Add variation to initial ping times to avoid synchronized pings
+            let mut ping_times: Vec<Option<Instant>> = vec![None; svr_sks.len()];
+            let mut failed_servers = vec![false; svr_sks.len()];
 
-                    // Send ping if needed
-                    if ping_time.is_none() || ping_time.as_ref().unwrap().elapsed() > keepalive_to {
+            // Main event loop
+            while !exit.load(Relaxed) {
+                // Send pings if needed
+                for (i, (sk, _addr)) in svr_sks.iter().enumerate() {
+                    if ping_times[i].is_none()
+                        || ping_times[i].as_ref().unwrap().elapsed() > keepalive_to
+                    {
                         let _ = sk.send(ping.as_ref());
-                        ping_time = Some(Instant::now());
+                        let variation = Duration::from_millis(
+                            rand::thread_rng().gen_range(0..keepalive_to.as_millis() as u64 / 2),
+                        );
+                        ping_times[i] = Some(Instant::now() + variation);
                     }
+                }
 
-                    // Try to receive from server
-                    let mut buf =
-                        unsafe { MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init() };
-                    match sk.recv(&mut buf) {
-                        Ok(n) => {
-                            let buf = unsafe { &*(&buf as *const _ as *const [u8; 1500]) };
+                // Poll all sockets
+                match Self::poll_sockets(&svr_sks, &failed_servers, 100) {
+                    Ok(ready) => {
+                        for (i, (sk, addr)) in svr_sks.iter().enumerate() {
+                            if !ready[i] {
+                                continue;
+                            }
 
-                            if let Ok(resp) = Response::parse_from_bytes(&buf[..n]) {
-                                if resp.id != myid {
-                                    continue;
-                                }
+                            let mut buf = unsafe {
+                                MaybeUninit::<[MaybeUninit<u8>; 1500]>::uninit().assume_init()
+                            };
+                            match sk.recv(&mut buf) {
+                                Ok(n) => {
+                                    let buf = unsafe { &*(&buf as *const _ as *const [u8; 1500]) };
+                                    if let Ok(resp) = Response::parse_from_bytes(&buf[..n]) {
+                                        if resp.id != myid {
+                                            continue;
+                                        }
 
-                                match resp.cmd {
-                                    Some(RespCmd::Pong(_)) => {
-                                        let mut last_pongs = last_pong.write().unwrap();
-                                        last_pongs[i] = Some(Instant::now());
-                                    }
-                                    Some(RespCmd::Fsync(fsync)) => {
-                                        log::debug!(
-                                            "fsync {} from server {}",
-                                            fsync.id,
-                                            server_addr
-                                        );
+                                        match resp.cmd {
+                                            Some(RespCmd::Pong(_)) => {
+                                                let mut last_pongs = last_pong.write().unwrap();
+                                                last_pongs[i] = Some(Instant::now());
+                                            }
+                                            Some(RespCmd::Fsync(fsync)) => {
+                                                log::debug!(
+                                                    "fsync {} from server {}",
+                                                    fsync.id,
+                                                    addr
+                                                );
 
-                                        // Send Rsync to both the original server and the peer
-                                        Self::send_rsync(&sk, &myid, &fsync.id, server_addr);
+                                                // Send Rsync to both the original server and the peer
+                                                Self::send_rsync(sk, &myid, &fsync.id, *addr);
 
-                                        if let Ok(addr) = fsync.addr.parse() {
-                                            Self::send_rsync(&sk, &myid, &fsync.id, addr);
-                                        } else {
-                                            log::debug!("Invalid fsync address");
+                                                if let Ok(peer_addr) = fsync.addr.parse() {
+                                                    Self::send_rsync(
+                                                        sk, &myid, &fsync.id, peer_addr,
+                                                    );
+                                                } else {
+                                                    log::debug!("Invalid fsync address");
+                                                }
+                                            }
+                                            _ => {}
                                         }
                                     }
-                                    _ => {}
+                                }
+                                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+                                Err(_) => {
+                                    failed_servers[i] = true;
+                                    continue;
                                 }
                             }
                         }
-                        Err(_) => continue,
                     }
+                    Err(_) => continue,
                 }
-            });
-        }
+            }
+        });
 
         let peer_sk = Self::create_socket(self.local_addr.unwrap(), self.sk_cfg.as_deref())?;
         Ok(peer_sk.into())

@@ -28,3 +28,4 @@ protobuf = "3.7.1"
 socket2 = { version = "0.5.8", features = ["all"] }
 tokio = { version = "1.42.0", features = ["full"], optional = true }
 nix = { version = "0.30.1", features = ["poll"] }
+rand = { version = "0.8.5" }
