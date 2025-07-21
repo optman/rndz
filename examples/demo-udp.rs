@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     loop {
-        let mut c = Client::new(&[server_addr], "c2", None, None).unwrap();
+        let c = Client::new(&[server_addr], "c2", None, None).unwrap();
         match c.connect("c1") {
             Ok(s) => {
                 s.send(b"hello").unwrap();

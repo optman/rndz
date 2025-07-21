@@ -218,7 +218,7 @@ impl Client {
     /// Try each server until a successful connection is established.
     ///
     /// Create a connected UDP socket with peer stored in peer_sk field, use `as_socket()` to get it.
-    pub fn connect(&mut self, target_id: &str) -> Result<UdpSocket> {
+    pub fn connect(&self, target_id: &str) -> Result<UdpSocket> {
         let mut isync = Isync::new();
         isync.id = target_id.into();
 
