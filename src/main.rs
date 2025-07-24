@@ -62,10 +62,9 @@ async fn run_server(opt: ServerOpt) -> Result<()> {
 
 async fn run_client(opt: ClientOpt) -> Result<()> {
     if !opt.tcp {
-        let mut c = udp::Client::new(&[&opt.server_addr], &opt.id, None, None)?;
-
         match opt.remote_peer {
             Some(peer) => {
+                let c = udp::client::Connector::new(&[&opt.server_addr], &opt.id, None, None)?;
                 let s = c.connect(&peer)?;
                 s.send(b"hello")?;
                 let mut buf = [0; 1500];
@@ -73,6 +72,7 @@ async fn run_client(opt: ClientOpt) -> Result<()> {
                 log::debug!("receive {} bytes from {}", n, addr.to_string());
             }
             None => {
+                let mut c = udp::client::Listener::new(&[&opt.server_addr], &opt.id, None, None)?;
                 let s = c.listen()?;
                 let mut buf = [0; 1500];
                 while let Ok((n, addr)) = s.recv_from(&mut buf) {

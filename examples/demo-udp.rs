@@ -1,4 +1,4 @@
-use rndz::udp::{Client, Server};
+use rndz::udp::{client, Server};
 use std::error::Error;
 use std::thread;
 use std::time;
@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let t = {
         thread::spawn(move || {
-            let mut c = Client::new(&[server_addr], "c1", None, None).unwrap();
+            let mut c = client::Listener::new(&[server_addr], "c1", None, None).unwrap();
             let s = c.listen().unwrap();
             let mut buf = [0; 10];
             let n = s.recv(&mut buf).unwrap();
@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     loop {
-        let c = Client::new(&[server_addr], "c2", None, None).unwrap();
+        let c = client::Connector::new(&[server_addr], "c2", None, None).unwrap();
         match c.connect("c1") {
             Ok(s) => {
                 s.send(b"hello").unwrap();

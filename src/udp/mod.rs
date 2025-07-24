@@ -5,11 +5,7 @@
 //! Use `Server` to create a rendezvous server.
 
 #[cfg(feature = "client")]
-mod client;
-#[cfg(feature = "client")]
-pub use client::Client;
-#[cfg(feature = "client")]
-pub use client::SocketConfigure;
+pub mod client;
 
 #[cfg(feature = "server")]
 mod server;
