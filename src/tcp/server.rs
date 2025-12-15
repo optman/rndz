@@ -4,6 +4,7 @@ use crate::proto::rndz::{
 };
 use log;
 use protobuf::Message;
+use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::HashMap;
 use std::io::{Error, ErrorKind::Other, Result};
 use std::net::SocketAddr;
@@ -14,7 +15,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{
         tcp::{ReadHalf, WriteHalf},
-        TcpListener, ToSocketAddrs,
+        TcpListener,
     },
     select, task,
     time::timeout,
@@ -30,8 +31,36 @@ pub struct Server {
 }
 
 impl Server {
-    pub async fn new<A: ToSocketAddrs>(listen_addr: A) -> Result<Self> {
-        let listener = TcpListener::bind(listen_addr).await?;
+    pub async fn new(listen_addr: SocketAddr, ipv6_only: bool) -> Result<Self> {
+        let listener = if ipv6_only {
+            // Create an IPv6-only socket
+            let socket = Socket::new(Domain::IPV6, Type::STREAM, Some(Protocol::TCP))?;
+            socket.set_nonblocking(true)?;
+            socket.set_reuse_address(true)?;
+            #[cfg(unix)]
+            socket.set_reuse_port(true)?;
+
+            // Set IPV6_V6ONLY to true for IPv6-only mode
+            socket.set_only_v6(true)?;
+
+            // Convert the address to IPv6 if needed
+            let addr = match listen_addr {
+                SocketAddr::V6(v6) => v6,
+                SocketAddr::V4(_v4) => {
+                    // For IPv4 addresses in IPv6-only mode, use IPv6 equivalent
+                    // This might fail if the address can't be converted
+                    return Err(Error::new(Other, "IPv4 address not supported in IPv6-only mode"));
+                }
+            };
+
+            // Bind and convert to tokio TcpListener
+            socket.bind(&addr.into())?;
+            socket.listen(1024)?;
+            let std_listener: std::net::TcpListener = socket.into();
+            TcpListener::from_std(std_listener)?
+        } else {
+            TcpListener::bind(listen_addr).await?
+        };
 
         Ok(Self {
             listener,

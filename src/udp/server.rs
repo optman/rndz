@@ -1,8 +1,9 @@
 use log;
 use protobuf::Message;
+use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::HashMap;
 use std::io::Result;
-use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant};
 
 use crate::proto::rndz::{
@@ -35,8 +36,33 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn new<A: ToSocketAddrs>(listen_addr: A) -> Result<Self> {
-        let socket = UdpSocket::bind(listen_addr)?;
+    pub fn new(listen_addr: SocketAddr, ipv6_only: bool) -> Result<Self> {
+        let socket = if ipv6_only {
+            // Create an IPv6-only socket
+            let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
+            socket.set_nonblocking(true)?;
+            socket.set_reuse_address(true)?;
+            #[cfg(unix)]
+            socket.set_reuse_port(true)?;
+
+            // Set IPV6_V6ONLY to true for IPv6-only mode
+            socket.set_only_v6(true)?;
+
+            // Convert the address to IPv6 if needed
+            let addr = match listen_addr {
+                SocketAddr::V6(v6) => v6,
+                SocketAddr::V4(_) => {
+                    return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "IPv4 address not supported in IPv6-only mode"));
+                }
+            };
+
+            // Bind and convert to std UdpSocket
+            socket.bind(&addr.into())?;
+            let std_socket: std::net::UdpSocket = socket.into();
+            std_socket
+        } else {
+            UdpSocket::bind(listen_addr)?
+        };
 
         Ok(Self {
             socket,

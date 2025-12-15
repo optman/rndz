@@ -13,7 +13,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let server_addr = "127.0.0.1:8888";
 
     {
-        spawn(async move { Server::new(server_addr).await?.run().await });
+        let addr: std::net::SocketAddr = server_addr.parse()?;
+        spawn(async move { Server::new(addr, false).await?.run().await });
     }
 
     let t = {

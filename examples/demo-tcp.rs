@@ -9,7 +9,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     {
-        rt.spawn(async move { Server::new(server_addr).await.unwrap().run().await });
+        let addr: std::net::SocketAddr = server_addr.parse()?;
+        rt.spawn(async move { Server::new(addr, false).await.unwrap().run().await });
     }
 
     let t = thread::spawn(move || {

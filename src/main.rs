@@ -34,6 +34,9 @@ struct ClientOpt {
 struct ServerOpt {
     #[structopt(long = "listen-addr", default_value = "0.0.0.0:8888")]
     listen_addr: SocketAddr,
+
+    #[structopt(long = "ipv6-only")]
+    ipv6_only: bool,
 }
 
 #[tokio::main]
@@ -51,12 +54,12 @@ async fn main() -> Result<()> {
 }
 
 async fn run_server(opt: ServerOpt) -> Result<()> {
-    let s = udp::Server::new(opt.listen_addr)?;
+    let s = udp::Server::new(opt.listen_addr, opt.ipv6_only)?;
     task::spawn_blocking(|| {
         s.run().unwrap();
     });
 
-    let s = tcp::Server::new(opt.listen_addr).await?;
+    let s = tcp::Server::new(opt.listen_addr, opt.ipv6_only).await?;
     s.run().await
 }
 

@@ -8,7 +8,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     let server_addr = "127.0.0.1:8888";
 
     {
-        thread::spawn(move || Server::new(server_addr).unwrap().run().unwrap());
+        let addr: std::net::SocketAddr = server_addr.parse()?;
+        thread::spawn(move || Server::new(addr, false).unwrap().run().unwrap());
     }
 
     let t = {
