@@ -78,10 +78,9 @@ impl Server {
             .set_read_timeout(Some(Duration::from_secs(30)))?;
 
         loop {
-            if let Ok((size, addr)) = self.socket.recv_from(&mut buf) {
-                if let Ok(req) = Request::parse_from_bytes(&buf[..size]) {
+            if let Ok((size, addr)) = self.socket.recv_from(&mut buf)
+                && let Ok(req) = Request::parse_from_bytes(&buf[..size]) {
                     self.handle_request(req, addr);
-                }
             }
 
             if Instant::now() > self.next_gc {

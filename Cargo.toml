@@ -1,7 +1,7 @@
 [package]
 name = "rndz"
 version = "0.1.5"
-edition = "2021"
+edition = "2024"
 description = "A simple rendezvous protocol implementation to help with NAT traversal or hole punchin"
 repository = "https://github.com/optman/rndz"
 license = "MIT"

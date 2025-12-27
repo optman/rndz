@@ -128,10 +128,9 @@ impl<'a> PeerHandler<'a> {
         }
 
         let mut peers = self.peers.lock().unwrap();
-        if let Some(p) = (*peers).get(&self.peer_id) {
-            if p.id == self.id {
+        if let Some(p) = (*peers).get(&self.peer_id)
+            && p.id == self.id {
                 peers.remove(&self.peer_id);
-            }
         }
 
         if !self.peer_id.is_empty() {
@@ -204,11 +203,10 @@ impl<'a> PeerHandler<'a> {
         self.peer_id = id;
         let mut peers = self.peers.lock().unwrap();
 
-        if let Some(p) = peers.get(&self.peer_id) {
-            if p.id != self.id {
+        if let Some(p) = peers.get(&self.peer_id)
+            && p.id != self.id {
                 log::debug!("updating peer {}", self.peer_id);
                 peers.remove(&self.peer_id);
-            }
         }
         let p = peers
             .entry(self.peer_id.clone())

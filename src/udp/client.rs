@@ -448,15 +448,14 @@ pub(crate) mod util {
             .ok_or_else(|| Error::new(Other, "No address found"))?;
 
         //if local_addr is ipv6, and server_addr is ipv4, convert it to ipv6
-        if local_addr.is_some_and(|addr| addr.is_ipv6()) {
-            if let SocketAddr::V4(v4) = server_addr {
+        if local_addr.is_some_and(|addr| addr.is_ipv6())
+            && let SocketAddr::V4(v4) = server_addr {
                 server_addr = SocketAddr::V6(std::net::SocketAddrV6::new(
                     v4.ip().to_ipv6_mapped(),
                     v4.port(),
                     0,
                     0,
                 ));
-            }
         }
 
         let local_addr = match local_addr {
