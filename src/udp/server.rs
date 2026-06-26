@@ -40,7 +40,6 @@ impl Server {
         let socket = if ipv6_only {
             // Create an IPv6-only socket
             let socket = Socket::new(Domain::IPV6, Type::DGRAM, Some(Protocol::UDP))?;
-            socket.set_nonblocking(true)?;
             socket.set_reuse_address(true)?;
             #[cfg(unix)]
             socket.set_reuse_port(true)?;
